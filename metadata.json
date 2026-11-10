@@ -1,0 +1,6 @@
+{
+  "name": "STEKOM CAMPUS EVENT MANAGEMENT",
+  "description": "Sistem Manajemen Event Kampus dan Peminjaman Ruangan Universitas STEKOM dengan deteksi bentrok jadwal, kalender interaktif, monitoring ruangan, hak akses bertingkat, dan laporan profesional.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
