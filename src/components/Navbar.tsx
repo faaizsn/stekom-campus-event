@@ -30,6 +30,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   mobileMenuOpen,
   setMobileMenuOpen,
+  serverStatus,
   onOpenSettings,
   onOpenChangePassword,
   onLogout
@@ -107,15 +108,27 @@ export const Navbar: React.FC<NavbarProps> = ({
                 type="button"
                 onClick={onOpenSettings}
                 className="hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#F7F5F0] hover:bg-stone-200/70 border border-stone-200 text-xs text-stone-600 transition"
-                title="Klik untuk konfigurasi Database & Pengaturan"
+                title={serverStatus.persistence}
               >
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-medium text-[11px]">Database Aktif</span>
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    serverStatus.mode === 'local' ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
+                  }`}
+                />
+                <span className="font-medium text-[11px]">
+                  {serverStatus.mode === 'local' ? 'Mode Lokal Browser' : 'Database Aktif'}
+                </span>
               </button>
             ) : (
               <div className="hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#F7F5F0] border border-stone-200 text-xs text-stone-600">
-                <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span className="font-medium text-[11px]">Sistem Aktif</span>
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    serverStatus.mode === 'local' ? 'bg-amber-500' : 'bg-emerald-500'
+                  }`}
+                />
+                <span className="font-medium text-[11px]">
+                  {serverStatus.mode === 'local' ? 'Mode Lokal' : 'Sistem Aktif'}
+                </span>
               </div>
             )}
 

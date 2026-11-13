@@ -7,6 +7,7 @@ import {
   Room,
   User
 } from '../types';
+import { localFallback } from './localFallback';
 
 const API_BASE = '/api';
 const TOKEN_KEY = 'stekom_auth_token';
@@ -31,6 +32,20 @@ export function setStoredToken(token: string | null) {
   }
 }
 
+function isBackendUnavailableResponse(res: Response): boolean {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  // Real Express API routes (even Express 404 fallback) always return JSON.
+  // Static file hosts / preview servers return non-JSON 404/405/502/503.
+  return (
+    (res.status === 404 || res.status === 405 || res.status === 502 || res.status === 503) &&
+    !contentType.includes('application/json')
+  );
+}
+
+function shouldUseLocalMode(): boolean {
+  return localFallback.isLocalToken(getStoredToken());
+}
+
 async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = getStoredToken();
   const headers = new Headers(init.headers || {});
@@ -44,37 +59,50 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
 }
 
 export const api = {
+  isLocalMode(): boolean {
+    return shouldUseLocalMode();
+  },
+
   // Authentication
   async login(email: string, password: string): Promise<AuthResponse> {
-    let res: Response;
     try {
-      res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
-    } catch {
-      throw new Error('Tidak dapat terhubung ke server backend. Periksa koneksi internet atau status server.');
-    }
-    if (!res.ok) {
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
+
+      if (isBackendUnavailableResponse(res)) {
+        const localAuth = localFallback.login(email, password);
+        setStoredToken(localAuth.token);
+        return localAuth;
+      }
+
+      if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Email atau kata sandi salah.');
       }
-      throw new Error(
-        `Server backend tidak merespons endpoint autentikasi (HTTP ${res.status}). Pastikan layanan backend berjalan.`
-      );
+
+      const data: AuthResponse = await res.json();
+      setStoredToken(data.token);
+      return data;
+    } catch (err: any) {
+      // Network-level failure (no backend reachable) -> fallback to local storage auth
+      if (err instanceof TypeError) {
+        const localAuth = localFallback.login(email, password);
+        setStoredToken(localAuth.token);
+        return localAuth;
+      }
+      throw err;
     }
-    const data: AuthResponse = await res.json();
-    setStoredToken(data.token);
-    return data;
   },
 
   async logout(): Promise<void> {
+    const token = getStoredToken();
     try {
-      const token = getStoredToken();
-      if (token) {
+      if (shouldUseLocalMode()) {
+        localFallback.logout(token);
+      } else if (token) {
         await authFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
       }
     } finally {
@@ -83,7 +111,14 @@ export const api = {
   },
 
   async getMe(): Promise<User> {
+    const token = getStoredToken();
+    if (shouldUseLocalMode()) {
+      return localFallback.getMe(token);
+    }
     const res = await authFetch(`${API_BASE}/auth/me`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getMe(token);
+    }
     if (!res.ok) {
       if (res.status === 401) {
         setStoredToken(null);
@@ -95,6 +130,9 @@ export const api = {
   },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    if (shouldUseLocalMode()) {
+      return localFallback.changePassword(getStoredToken(), currentPassword, newPassword);
+    }
     const res = await authFetch(`${API_BASE}/auth/change-password`, {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword })
@@ -108,13 +146,22 @@ export const api = {
 
   // System Status
   async getStatus() {
+    if (shouldUseLocalMode()) {
+      return localFallback.getStatus();
+    }
     const res = await fetch(`${API_BASE}/status`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getStatus();
+    }
     if (!res.ok) throw new Error('Failed to fetch system status');
     return res.json();
   },
 
   // Reset to initial demo data
   async resetData(user_name?: string, user_role?: string) {
+    if (shouldUseLocalMode()) {
+      return localFallback.resetData(getStoredToken());
+    }
     const res = await authFetch(`${API_BASE}/reset-data`, {
       method: 'POST',
       body: JSON.stringify({ user_name, user_role })
@@ -128,12 +175,18 @@ export const api = {
 
   // Rooms API
   async getRooms(): Promise<Room[]> {
+    if (shouldUseLocalMode()) {
+      return localFallback.getRooms(getStoredToken());
+    }
     const res = await authFetch(`${API_BASE}/rooms`);
     if (!res.ok) throw new Error('Gagal memuat data ruangan');
     return res.json();
   },
 
   async createRoom(room: Partial<Room>, currentUser?: User): Promise<Room> {
+    if (shouldUseLocalMode()) {
+      return localFallback.createRoom(getStoredToken(), room);
+    }
     const res = await authFetch(`${API_BASE}/rooms`, {
       method: 'POST',
       body: JSON.stringify({ ...room, current_user: currentUser })
@@ -146,6 +199,9 @@ export const api = {
   },
 
   async updateRoom(id: string, room: Partial<Room>, currentUser?: User): Promise<Room> {
+    if (shouldUseLocalMode()) {
+      return localFallback.updateRoom(getStoredToken(), id, room);
+    }
     const res = await authFetch(`${API_BASE}/rooms/${id}`, {
       method: 'PUT',
       body: JSON.stringify({ ...room, current_user: currentUser })
@@ -158,6 +214,9 @@ export const api = {
   },
 
   async deleteRoom(id: string, userName?: string, userRole?: string): Promise<{ success: boolean }> {
+    if (shouldUseLocalMode()) {
+      return localFallback.deleteRoom(getStoredToken(), id);
+    }
     const url = new URL(`${window.location.origin}${API_BASE}/rooms/${id}`);
     if (userName) url.searchParams.set('user_name', userName);
     if (userRole) url.searchParams.set('user_role', userRole);
@@ -174,6 +233,9 @@ export const api = {
 
   // Events API
   async getEvents(filters?: Partial<FilterOptions>): Promise<CampusEvent[]> {
+    if (shouldUseLocalMode()) {
+      return localFallback.getEvents(getStoredToken(), filters);
+    }
     const url = new URL(`${window.location.origin}${API_BASE}/events`);
     if (filters) {
       if (filters.month && filters.month !== 'all') url.searchParams.set('month', filters.month);
@@ -197,6 +259,9 @@ export const api = {
     ruangan_ids: string[];
     status?: string;
   }): Promise<ConflictCheckResult> {
+    if (shouldUseLocalMode()) {
+      return localFallback.checkConflict(getStoredToken(), eventData);
+    }
     const res = await authFetch(`${API_BASE}/events/check-conflict`, {
       method: 'POST',
       body: JSON.stringify(eventData)
@@ -206,6 +271,9 @@ export const api = {
   },
 
   async createEvent(eventData: Partial<CampusEvent>, currentUser?: User): Promise<CampusEvent> {
+    if (shouldUseLocalMode()) {
+      return localFallback.createEvent(getStoredToken(), eventData);
+    }
     const res = await authFetch(`${API_BASE}/events`, {
       method: 'POST',
       body: JSON.stringify({ ...eventData, current_user: currentUser })
@@ -218,6 +286,9 @@ export const api = {
   },
 
   async updateEvent(id: string, eventData: Partial<CampusEvent>, currentUser?: User): Promise<CampusEvent> {
+    if (shouldUseLocalMode()) {
+      return localFallback.updateEvent(getStoredToken(), id, eventData);
+    }
     const res = await authFetch(`${API_BASE}/events/${id}`, {
       method: 'PUT',
       body: JSON.stringify({ ...eventData, current_user: currentUser })
@@ -230,6 +301,9 @@ export const api = {
   },
 
   async deleteEvent(id: string, userName?: string, userRole?: string): Promise<{ success: boolean }> {
+    if (shouldUseLocalMode()) {
+      return localFallback.deleteEvent(getStoredToken(), id);
+    }
     const url = new URL(`${window.location.origin}${API_BASE}/events/${id}`);
     if (userName) url.searchParams.set('user_name', userName);
     if (userRole) url.searchParams.set('user_role', userRole);
@@ -246,12 +320,18 @@ export const api = {
 
   // Users API
   async getUsers(): Promise<User[]> {
+    if (shouldUseLocalMode()) {
+      return localFallback.getUsers(getStoredToken());
+    }
     const res = await authFetch(`${API_BASE}/users`);
     if (!res.ok) throw new Error('Gagal memuat pengguna');
     return res.json();
   },
 
   async createUser(user: Partial<User> & { password?: string }, currentUser?: User): Promise<User> {
+    if (shouldUseLocalMode()) {
+      return localFallback.createUser(getStoredToken(), user);
+    }
     const res = await authFetch(`${API_BASE}/users`, {
       method: 'POST',
       body: JSON.stringify({ ...user, current_user: currentUser })
@@ -264,6 +344,9 @@ export const api = {
   },
 
   async updateUser(id: string, user: Partial<User> & { new_password?: string }, currentUser?: User): Promise<User> {
+    if (shouldUseLocalMode()) {
+      return localFallback.updateUser(getStoredToken(), id, user);
+    }
     const res = await authFetch(`${API_BASE}/users/${id}`, {
       method: 'PUT',
       body: JSON.stringify({ ...user, current_user: currentUser })
@@ -276,6 +359,9 @@ export const api = {
   },
 
   async deleteUser(id: string, userName?: string, userRole?: string): Promise<{ success: boolean }> {
+    if (shouldUseLocalMode()) {
+      return localFallback.deleteUser(getStoredToken(), id);
+    }
     const url = new URL(`${window.location.origin}${API_BASE}/users/${id}`);
     if (userName) url.searchParams.set('user_name', userName);
     if (userRole) url.searchParams.set('user_role', userRole);
@@ -292,6 +378,9 @@ export const api = {
 
   // Audit Logs
   async getAuditLogs(): Promise<AuditLog[]> {
+    if (shouldUseLocalMode()) {
+      return localFallback.getAuditLogs(getStoredToken());
+    }
     const res = await authFetch(`${API_BASE}/audit-logs`);
     if (!res.ok) throw new Error('Gagal memuat riwayat audit');
     return res.json();
@@ -306,12 +395,18 @@ export const api = {
 
   // Settings
   async getSettings() {
+    if (shouldUseLocalMode()) {
+      return localFallback.getSettings(getStoredToken());
+    }
     const res = await authFetch(`${API_BASE}/settings`);
     if (!res.ok) throw new Error('Gagal memuat pengaturan sistem');
     return res.json();
   },
 
   async updateSettings(settings: any) {
+    if (shouldUseLocalMode()) {
+      return localFallback.updateSettings(getStoredToken(), settings);
+    }
     const res = await authFetch(`${API_BASE}/settings`, {
       method: 'PUT',
       body: JSON.stringify(settings)

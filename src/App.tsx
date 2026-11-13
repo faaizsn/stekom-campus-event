@@ -410,8 +410,8 @@ export default function App() {
         setMobileMenuOpen={setMobileMenuOpen}
         serverStatus={{
           online: true,
-          persistence: 'File System (db.json)',
-          mode: 'demo'
+          persistence: api.isLocalMode() ? 'Browser Storage (Statis)' : 'File System (db.json)',
+          mode: api.isLocalMode() ? 'local' : 'server'
         }}
         onOpenSettings={() => setActiveTab('settings')}
         onOpenChangePassword={() => setChangePasswordOpen(true)}

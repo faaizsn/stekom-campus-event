@@ -486,6 +486,28 @@
   ],
   "audit_logs": [
     {
+      "id": "log-1794541426274",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "LOGIN",
+      "target_type": "Sistem",
+      "target_id": "user-admin",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Dr. Ir. Agus Wibowo, M.Kom (admin@stekom.ac.id) masuk ke sistem sebagai Administrator",
+      "timestamp": "2026-11-13T03:43:46.274Z"
+    },
+    {
+      "id": "log-1794541267368",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "LOGIN",
+      "target_type": "Sistem",
+      "target_id": "user-admin",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Dr. Ir. Agus Wibowo, M.Kom (admin@stekom.ac.id) masuk ke sistem sebagai Administrator",
+      "timestamp": "2026-11-13T03:41:07.368Z"
+    },
+    {
       "id": "log-1794540925369",
       "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
       "user_role": "Administrator",
