@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import {
   AlertTriangle,
-  Copy,
+  CheckCircle2,
   Database,
   Flame,
   Globe,
-  HardDrive,
-  RotateCcw
+  RotateCcw,
+  ShieldCheck
 } from 'lucide-react';
-import { api } from '../services/api';
 import { UserRole } from '../types';
 
 interface SettingsViewProps {
@@ -26,8 +25,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [resetting, setResetting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const isLocal = api.isLocalMode();
 
   const handleConfirmReset = async () => {
     setConfirmOpen(false);
@@ -41,32 +38,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
-  };
-
-  const firebaseEnvSnippet = `# ========================================================
-# KONFIGURASI DATABASE & FIREBASE (SERVER-SIDE ONLY)
-# Jangan meletakkan secret keys di frontend client!
-# ========================================================
-FIREBASE_PROJECT_ID="stekom-campus-events"
-FIREBASE_CLIENT_EMAIL="firebase-adminsdk@stekom-campus-events.iam.gserviceaccount.com"
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-DATABASE_PERSISTENCE_MODE="file_json" # atau "firestore"
-`;
-
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight flex items-center space-x-2">
           <Database className="w-6 h-6 text-blue-700" strokeWidth={1.75} />
-          <span>Pengaturan Sistem, Database & Deployment</span>
+          <span>Pengaturan Sistem & Cloud Database</span>
         </h1>
         <p className="text-xs text-stone-500 mt-1 font-medium">
-          Informasi status persistensi data, konfigurasi backend, dan pemulihan data contoh Universitas STEKOM
+          Informasi status Cloud Firestore, Firebase Auth RBAC, dan pemulihan data contoh Universitas STEKOM
         </p>
       </div>
 
@@ -75,21 +56,19 @@ DATABASE_PERSISTENCE_MODE="file_json" # atau "firestore"
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center space-x-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold shrink-0">
-              <HardDrive className="w-5 h-5" strokeWidth={1.75} />
+              <Flame className="w-5 h-5" strokeWidth={1.75} />
             </div>
             <div>
               <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                 <h3 className="text-sm font-bold text-stone-900">
-                  Status Database: AKTIF & PERSISTEN
+                  Status Database: AKTIF & SINKRON REAL-TIME
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  {isLocal ? 'Browser Storage (Mode Preview)' : 'Backend JSON (/data/db.json)'}
+                  Firebase Cloud Firestore
                 </span>
               </div>
               <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                {isLocal
-                  ? 'Anda mengakses aplikasi melalui mode preview statis (Browser Storage). Data akun & event tersimpan persisten di browser ini.'
-                  : 'Penyimpanan file terstruktur JSON di backend (/data/db.json) dengan sinkronisasi otomatis antar pengguna di server aktif.'}
+                Seluruh data jadwal event, 21 ruangan STEKOM, hak akses pengguna, dan audit log tersimpan persisten di Cloud Firestore serta tersinkron otomatis lintas perangkat dan URL publikasi.
               </p>
             </div>
           </div>
@@ -122,51 +101,38 @@ DATABASE_PERSISTENCE_MODE="file_json" # atau "firestore"
           </div>
           <div className="p-3 rounded-xl bg-[#F7F5F0] border border-stone-200/60">
             <span className="text-stone-500 text-[11px]">Keamanan Autentikasi:</span>
-            <p className="font-extrabold text-emerald-700 text-sm mt-0.5">Scrypt + Token RBAC</p>
+            <p className="font-extrabold text-emerald-700 text-sm mt-0.5">Firebase Auth (Google)</p>
           </div>
         </div>
       </div>
 
-      {/* Firebase & Firestore Deployment Documentation */}
+      {/* Cloud Architecture Summary */}
       <div className="bg-[#FCFBF8] rounded-[26px] p-6 border border-stone-200/90 shadow-xs space-y-4">
         <div className="flex items-center space-x-2 text-stone-900 font-bold text-sm">
-          <Flame className="w-5 h-5 text-amber-500" strokeWidth={1.75} />
-          <span>Panduan Deployment Produksi & Sinkronisasi Multi-Perangkat</span>
+          <ShieldCheck className="w-5 h-5 text-blue-700" strokeWidth={1.75} />
+          <span>Arsitektur Persistensi & Keamanan Produksi</span>
         </div>
 
-        <p className="text-xs text-stone-600 leading-relaxed">
-          Untuk sinkronisasi data pengguna dan event lintas perangkat secara real-time di produksi, jalankan aplikasi menggunakan server penuh (<code className="text-stone-800 font-semibold">server.ts</code>) atau hubungkan dengan <strong>Firebase Cloud Firestore</strong> di sisi server.
-        </p>
-
-        {/* Code Snippet Box */}
-        <div className="relative bg-slate-900 rounded-2xl p-4 text-xs font-mono text-slate-200 overflow-x-auto">
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-[11px] text-slate-400">
-            <span>Contoh Konfigurasi .env.production</span>
-            <button
-              onClick={() => copyToClipboard(firebaseEnvSnippet, 'env')}
-              className="flex items-center space-x-1 text-blue-400 hover:text-blue-300"
-            >
-              <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
-              <span>{copiedKey === 'env' ? 'Tersalin!' : 'Salin Kode'}</span>
-            </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-stone-700">
+          <div className="p-3.5 rounded-2xl bg-[#F7F5F0] border border-stone-200/70 space-y-1">
+            <div className="flex items-center space-x-1.5 font-bold text-stone-900">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" strokeWidth={1.75} />
+              <span>Sinkronisasi Real-Time Multi-Pengguna</span>
+            </div>
+            <p className="text-[11px] text-stone-600 leading-relaxed">
+              Perubahan jadwal event, konfirmasi ruangan, maupun penambahan pengguna langsung tampil pada seluruh perangkat tanpa muat ulang halaman.
+            </p>
           </div>
-          <pre className="text-[11px] leading-relaxed">{firebaseEnvSnippet}</pre>
-        </div>
 
-        {/* Steps List */}
-        <div className="space-y-2 pt-2 text-xs text-stone-700">
-          <h4 className="font-bold text-stone-900">Langkah Deployment Produksi:</h4>
-          <ol className="list-decimal pl-5 space-y-1.5 text-stone-600">
-            <li>
-              <strong>Build Aplikasi:</strong> Jalankan perintah <code className="bg-[#F7F5F0] px-1.5 py-0.5 rounded text-blue-700 font-mono">npm run build</code> untuk memproduksi bundle frontend di folder <code className="font-mono">dist/</code>.
-            </li>
-            <li>
-              <strong>Jalankan Server:</strong> Jalankan <code className="bg-[#F7F5F0] px-1.5 py-0.5 rounded text-blue-700 font-mono">npm start</code> (menjalankan <code className="font-mono">node server.ts</code> dengan <code className="font-mono">NODE_ENV=production</code>).
-            </li>
-            <li>
-              <strong>Persistensi Data:</strong> Backend menggunakan <code className="font-mono">/data/db.json</code> (dan fallback otomatis di mode preview statis) sehingga seluruh fitur login, CRUD pengguna, ruangan, dan jadwal event selalu berfungsi lancar.
-            </li>
-          </ol>
+          <div className="p-3.5 rounded-2xl bg-[#F7F5F0] border border-stone-200/70 space-y-1">
+            <div className="flex items-center space-x-1.5 font-bold text-stone-900">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" strokeWidth={1.75} />
+              <span>Aturan Keamanan Firestore Rules</span>
+            </div>
+            <p className="text-[11px] text-stone-600 leading-relaxed">
+              Proteksi RBAC terverifikasi server-side memisahkan hak akses Administrator, Operator, dan Viewer serta menjaga integritas Audit Log.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -214,7 +180,7 @@ DATABASE_PERSISTENCE_MODE="file_json" # atau "firestore"
               <h3 className="text-sm font-extrabold text-stone-900">Reset Data Contoh STEKOM?</h3>
             </div>
             <p className="text-stone-600 leading-relaxed">
-              Seluruh perubahan jadwal, ruangan, dan pengguna tambahan akan dikembalikan ke data awal default Universitas STEKOM. Tindakan ini tidak dapat dibatalkan.
+              Seluruh jadwal event dan data 21 ruangan di Cloud Firestore akan dikembalikan ke data awal default Universitas STEKOM. Tindakan ini tidak dapat dibatalkan.
             </p>
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button

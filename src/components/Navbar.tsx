@@ -21,7 +21,7 @@ interface NavbarProps {
     mode: string;
   };
   onOpenSettings: () => void;
-  onOpenChangePassword: () => void;
+  onOpenChangePassword?: () => void;
   onLogout: () => void;
   currentTabLabel?: string;
 }
@@ -110,24 +110,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className="hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#F7F5F0] hover:bg-stone-200/70 border border-stone-200 text-xs text-stone-600 transition"
                 title={serverStatus.persistence}
               >
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    serverStatus.mode === 'local' ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
-                  }`}
-                />
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="font-medium text-[11px]">
-                  {serverStatus.mode === 'local' ? 'Mode Lokal Browser' : 'Database Aktif'}
+                  Cloud Firestore Aktif
                 </span>
               </button>
             ) : (
               <div className="hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#F7F5F0] border border-stone-200 text-xs text-stone-600">
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    serverStatus.mode === 'local' ? 'bg-amber-500' : 'bg-emerald-500'
-                  }`}
-                />
+                <div className="w-2 h-2 rounded-full bg-emerald-500" />
                 <span className="font-medium text-[11px]">
-                  {serverStatus.mode === 'local' ? 'Mode Lokal' : 'Sistem Aktif'}
+                  Sistem Cloud Aktif
                 </span>
               </div>
             )}
@@ -189,17 +181,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
 
                   <div className="p-1.5 space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProfileMenuOpen(false);
-                        onOpenChangePassword();
-                      }}
-                      className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-700 hover:bg-[#F7F5F0] hover:text-stone-900 transition"
-                    >
-                      <KeyRound className="w-4 h-4 text-blue-700" strokeWidth={1.75} />
-                      <span>Ubah Kata Sandi</span>
-                    </button>
+                    {onOpenChangePassword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          onOpenChangePassword();
+                        }}
+                        className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-700 hover:bg-[#F7F5F0] hover:text-stone-900 transition"
+                      >
+                        <KeyRound className="w-4 h-4 text-blue-700" strokeWidth={1.75} />
+                        <span>Ubah Kata Sandi</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"

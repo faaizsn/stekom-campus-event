@@ -2,12 +2,8 @@ import React, { useState } from 'react';
 import {
   AlertCircle,
   CalendarDays,
-  Eye,
-  EyeOff,
-  KeyRound,
+  Database,
   Lock,
-  LogIn,
-  Mail,
   Shield
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -18,27 +14,28 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleGoogleLogin = async () => {
     setError(null);
-
-    if (!email.trim() || !password) {
-      setError('Silakan masukkan email kampus dan kata sandi Anda.');
-      return;
-    }
-
     try {
       setLoading(true);
-      const result = await api.login(email.trim(), password);
-      onLoginSuccess(result.user);
+      const user = await api.loginWithGoogle();
+      onLoginSuccess(user);
     } catch (err: any) {
-      setError(err.message || 'Gagal masuk ke sistem. Periksa email dan kata sandi Anda.');
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user') {
+        setError('Jendela login Google ditutup sebelum proses selesai. Silakan coba lagi.');
+      } else if (code === 'auth/popup-blocked') {
+        setError('Popup login Google diblokir browser. Izinkan popup untuk halaman ini lalu coba kembali.');
+      } else if (code === 'auth/cancelled-popup-request') {
+        setError('Permintaan login dibatalkan. Silakan klik tombol masuk kembali.');
+      } else if (code === 'auth/unauthorized-domain') {
+        setError('Domain ini belum terdaftar pada OAuth Authorized Domains Firebase Console.');
+      } else {
+        setError(err?.message || 'Gagal masuk dengan akun Google. Silakan coba kembali.');
+      }
     } finally {
       setLoading(false);
     }
@@ -73,7 +70,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               Masuk ke Sistem
             </h2>
             <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-              Masukkan email dan kata sandi akun Anda untuk mengakses dashboard, jadwal event, dan penggunaan ruangan.
+              Masuk menggunakan akun Google Anda untuk mengakses dashboard, jadwal event, dan penggunaan 21 ruangan Universitas STEKOM.
             </p>
           </div>
 
@@ -84,89 +81,66 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-stone-700 mb-1.5">
-                Email Kampus
-              </label>
-              <div className="relative">
-                <Mail
-                  className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2"
-                  strokeWidth={1.75}
-                />
-                <input
-                  type="email"
-                  required
-                  autoComplete="email"
-                  placeholder="nama@stekom.ac.id"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-[#F7F5F0] border border-stone-200 rounded-xl text-stone-900 font-medium placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-stone-700 mb-1.5">
-                Kata Sandi
-              </label>
-              <div className="relative">
-                <KeyRound
-                  className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2"
-                  strokeWidth={1.75}
-                />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  autoComplete="current-password"
-                  placeholder="Masukkan kata sandi"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-10 py-2.5 text-xs bg-[#F7F5F0] border border-stone-200 rounded-xl text-stone-900 font-medium placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700 p-1"
-                  aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Lihat kata sandi'}
-                >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" strokeWidth={1.75} />
-                  ) : (
-                    <Eye className="w-4 h-4" strokeWidth={1.75} />
-                  )}
-                </button>
-              </div>
-            </div>
-
+          <div className="space-y-3">
             <button
-              type="submit"
+              type="button"
+              onClick={handleGoogleLogin}
               disabled={loading}
-              className="w-full mt-2 inline-flex items-center justify-center space-x-2 px-5 py-3 text-xs font-bold text-white bg-gradient-to-r from-blue-700 to-slate-800 hover:from-blue-800 hover:to-slate-900 active:scale-[0.99] rounded-xl shadow-md shadow-blue-900/15 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full inline-flex items-center justify-center space-x-3 px-5 py-3.5 text-xs font-bold text-stone-800 bg-white hover:bg-stone-50 active:scale-[0.99] border border-stone-300 rounded-xl shadow-sm transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Memverifikasi Akun...</span>
+                  <div className="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
+                  <span>Menghubungkan ke Akun Google...</span>
                 </>
               ) : (
                 <>
-                  <LogIn className="w-4 h-4" strokeWidth={1.75} />
-                  <span>Masuk ke Sistem</span>
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z"
+                    />
+                  </svg>
+                  <span>Masuk dengan Akun Google</span>
                 </>
               )}
             </button>
-          </form>
 
-          <div className="pt-4 border-t border-stone-200/80 flex items-center justify-between text-[11px] text-stone-500">
-            <span className="inline-flex items-center space-x-1.5">
-              <Shield className="w-3.5 h-3.5 text-blue-700" strokeWidth={1.75} />
-              <span>Akses Terproteksi</span>
-            </span>
-            <span className="inline-flex items-center space-x-1.5">
-              <CalendarDays className="w-3.5 h-3.5 text-stone-400" strokeWidth={1.75} />
-              <span>WIB (Asia/Jakarta)</span>
-            </span>
+            <p className="text-[11px] text-stone-500 text-center leading-relaxed px-2">
+              Akun yang telah didaftarkan oleh Administrator otomatis mendapatkan hak akses Operator atau Administrator saat login.
+            </p>
+          </div>
+
+          <div className="pt-4 border-t border-stone-200/80 space-y-2.5">
+            <div className="flex items-center justify-between text-[11px] text-stone-500">
+              <span className="inline-flex items-center space-x-1.5">
+                <Shield className="w-3.5 h-3.5 text-blue-700" strokeWidth={1.75} />
+                <span>Firebase Auth RBAC</span>
+              </span>
+              <span className="inline-flex items-center space-x-1.5">
+                <CalendarDays className="w-3.5 h-3.5 text-stone-400" strokeWidth={1.75} />
+                <span>WIB (Asia/Jakarta)</span>
+              </span>
+            </div>
+
+            <div className="px-3 py-2 rounded-xl border text-[11px] flex items-center space-x-2 bg-emerald-50/70 border-emerald-200/80 text-emerald-800">
+              <Database className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
+              <span className="font-medium leading-snug">
+                Terhubung ke Cloud Firestore Real-Time (Sinkron Lintas Perangkat)
+              </span>
+            </div>
           </div>
         </div>
       </div>

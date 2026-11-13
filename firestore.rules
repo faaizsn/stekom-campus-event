@@ -1,0 +1,336 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core helper primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedEmail() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function authEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidRole(role) {
+      return role in ['Administrator', 'Operator', 'Viewer'];
+    }
+
+    function isAdminBootstrapEmail() {
+      return isVerifiedEmail() && (
+        authEmail() == 'mumahadfaiz@stekom.ac.id' ||
+        authEmail() == 'admin@stekom.ac.id'
+      );
+    }
+
+    function getUserRole() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : 'Viewer';
+    }
+
+    function isAdmin() {
+      return isAdminBootstrapEmail() || (isVerifiedEmail() && getUserRole() == 'Administrator');
+    }
+
+    function isOperatorOrAdmin() {
+      return isAdmin() || (isVerifiedEmail() && getUserRole() == 'Operator');
+    }
+
+    function hasValidInvite(inviteId, targetRole) {
+      return inviteId is string
+        && isValidId(inviteId)
+        && exists(/databases/$(database)/documents/user_invites/$(inviteId))
+        && get(/databases/$(database)/documents/user_invites/$(inviteId)).data.email.lower() == authEmail()
+        && get(/databases/$(database)/documents/user_invites/$(inviteId)).data.role == targetRole;
+    }
+
+    // Validation blueprints
+    function isValidUserCreate(data, userId) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'department', 'phone', 'inviteId', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.email.lower() == authEmail()
+        && isValidRole(data.role)
+        && (!('department' in data) || (data.department is string && data.department.size() <= 150))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && (!('inviteId' in data) || (data.inviteId is string && isValidId(data.inviteId)))
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isValidUserUpdate(data, prev) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'department', 'phone', 'inviteId', 'createdAt', 'updatedAt'])
+        && data.uid == prev.uid
+        && data.email == prev.email
+        && data.createdAt == prev.createdAt
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
+        && isValidRole(data.role)
+        && (!('department' in data) || (data.department is string && data.department.size() <= 150))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidInviteCreate(data, inviteId) {
+      return data.keys().hasAll(['id', 'name', 'email', 'role', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'department', 'phone', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id == inviteId
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && isValidRole(data.role)
+        && (!('department' in data) || (data.department is string && data.department.size() <= 150))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && data.createdByUid == request.auth.uid
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isValidInviteUpdate(data, prev) {
+      return data.keys().hasAll(['id', 'name', 'email', 'role', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'department', 'phone', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.id == prev.id
+        && data.createdByUid == prev.createdByUid
+        && data.createdAt == prev.createdAt
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && isValidRole(data.role)
+        && (!('department' in data) || (data.department is string && data.department.size() <= 150))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidRoomCreate(data, roomId) {
+      return data.keys().hasAll(['id', 'campusId', 'name', 'code', 'capacity', 'is_general', 'status', 'updatedByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'campusId', 'name', 'code', 'capacity', 'is_general', 'floor', 'building', 'facilities', 'status', 'notes', 'updatedByUid', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id == roomId
+        && data.campusId == 'stekom'
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 40
+        && data.capacity is number && data.capacity >= 0 && data.capacity <= 50000
+        && data.is_general is bool
+        && (!('floor' in data) || (data.floor is string && data.floor.size() <= 60))
+        && (!('building' in data) || (data.building is string && data.building.size() <= 120))
+        && (!('facilities' in data) || (data.facilities is list && data.facilities.size() <= 30 && (data.facilities.size() == 0 || data.facilities[0] is string)))
+        && data.status in ['Tersedia', 'Pemeliharaan']
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && data.updatedByUid == request.auth.uid
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isValidRoomUpdate(data, prev) {
+      return data.keys().hasAll(['id', 'campusId', 'name', 'code', 'capacity', 'is_general', 'status', 'updatedByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'campusId', 'name', 'code', 'capacity', 'is_general', 'floor', 'building', 'facilities', 'status', 'notes', 'updatedByUid', 'createdAt', 'updatedAt'])
+        && data.id == prev.id
+        && data.campusId == prev.campusId
+        && data.createdAt == prev.createdAt
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 40
+        && data.capacity is number && data.capacity >= 0 && data.capacity <= 50000
+        && data.is_general is bool
+        && (!('floor' in data) || (data.floor is string && data.floor.size() <= 60))
+        && (!('building' in data) || (data.building is string && data.building.size() <= 120))
+        && (!('facilities' in data) || (data.facilities is list && data.facilities.size() <= 30 && (data.facilities.size() == 0 || data.facilities[0] is string)))
+        && data.status in ['Tersedia', 'Pemeliharaan']
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && data.updatedByUid == request.auth.uid
+        && data.updatedAt == request.time;
+    }
+
+    function isValidEventCreate(data, eventId) {
+      return data.keys().hasAll(['id', 'campusId', 'nama_event', 'tanggal', 'jam_mulai', 'jam_selesai', 'jumlah_peserta', 'pic', 'nomor_hp_pic', 'ruangan_ids', 'status', 'created_by', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'campusId', 'nama_event', 'tanggal', 'jam_mulai', 'jam_selesai', 'jumlah_peserta', 'pic', 'nomor_hp_pic', 'ruangan_ids', 'status', 'catatan', 'created_by', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id == eventId
+        && data.campusId == 'stekom'
+        && data.nama_event is string && data.nama_event.size() >= 1 && data.nama_event.size() <= 200
+        && data.tanggal is string && data.tanggal.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.jam_mulai is string && data.jam_mulai.matches('^[0-9]{2}:[0-9]{2}$')
+        && data.jam_selesai is string && data.jam_selesai.matches('^[0-9]{2}:[0-9]{2}$')
+        && data.jam_selesai > data.jam_mulai
+        && data.jumlah_peserta is number && data.jumlah_peserta > 0 && data.jumlah_peserta <= 50000
+        && data.pic is string && data.pic.size() >= 1 && data.pic.size() <= 120
+        && data.nomor_hp_pic is string && data.nomor_hp_pic.size() >= 1 && data.nomor_hp_pic.size() <= 40
+        && data.ruangan_ids is list && data.ruangan_ids.size() >= 1 && data.ruangan_ids.size() <= 25 && data.ruangan_ids[0] is string
+        && data.status in ['Scheduled', 'Menunggu Konfirmasi', 'Dibatalkan']
+        && (!('catatan' in data) || (data.catatan is string && data.catatan.size() <= 1000))
+        && data.created_by is string && data.created_by.size() >= 1 && data.created_by.size() <= 150
+        && data.ownerUid == request.auth.uid
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isValidEventUpdate(data, prev) {
+      return data.keys().hasAll(['id', 'campusId', 'nama_event', 'tanggal', 'jam_mulai', 'jam_selesai', 'jumlah_peserta', 'pic', 'nomor_hp_pic', 'ruangan_ids', 'status', 'created_by', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'campusId', 'nama_event', 'tanggal', 'jam_mulai', 'jam_selesai', 'jumlah_peserta', 'pic', 'nomor_hp_pic', 'ruangan_ids', 'status', 'catatan', 'created_by', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.id == prev.id
+        && data.campusId == prev.campusId
+        && data.ownerUid == prev.ownerUid
+        && data.created_by == prev.created_by
+        && data.createdAt == prev.createdAt
+        && data.nama_event is string && data.nama_event.size() >= 1 && data.nama_event.size() <= 200
+        && data.tanggal is string && data.tanggal.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.jam_mulai is string && data.jam_mulai.matches('^[0-9]{2}:[0-9]{2}$')
+        && data.jam_selesai is string && data.jam_selesai.matches('^[0-9]{2}:[0-9]{2}$')
+        && data.jam_selesai > data.jam_mulai
+        && data.jumlah_peserta is number && data.jumlah_peserta > 0 && data.jumlah_peserta <= 50000
+        && data.pic is string && data.pic.size() >= 1 && data.pic.size() <= 120
+        && data.nomor_hp_pic is string && data.nomor_hp_pic.size() >= 1 && data.nomor_hp_pic.size() <= 40
+        && data.ruangan_ids is list && data.ruangan_ids.size() >= 1 && data.ruangan_ids.size() <= 25 && data.ruangan_ids[0] is string
+        && data.status in ['Scheduled', 'Menunggu Konfirmasi', 'Dibatalkan']
+        && (!('catatan' in data) || (data.catatan is string && data.catatan.size() <= 1000))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidAuditLogCreate(data, logId) {
+      return data.keys().hasAll(['id', 'campusId', 'actorUid', 'user_name', 'user_role', 'action', 'target_type', 'target_name', 'details', 'createdAt'])
+        && data.keys().hasOnly(['id', 'campusId', 'actorUid', 'user_name', 'user_role', 'action', 'target_type', 'target_id', 'target_name', 'details', 'createdAt'])
+        && data.id is string && data.id == logId
+        && data.campusId == 'stekom'
+        && data.actorUid == request.auth.uid
+        && data.user_name is string && data.user_name.size() >= 1 && data.user_name.size() <= 150
+        && isValidRole(data.user_role)
+        && data.action in ['TAMBAH', 'UBAH', 'HAPUS', 'KONFIRMASI', 'BATALKAN', 'RUANGAN_STATUS', 'LOGIN', 'LOGOUT', 'PENGATURAN']
+        && data.target_type in ['Event', 'Ruangan', 'Pengguna', 'Sistem']
+        && (!('target_id' in data) || (data.target_id is string && data.target_id.size() <= 128))
+        && data.target_name is string && data.target_name.size() >= 1 && data.target_name.size() <= 200
+        && data.details is string && data.details.size() >= 1 && data.details.size() <= 500
+        && data.createdAt == request.time;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['campusId', 'app_name', 'campus_name', 'mode', 'timezone', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly(['campusId', 'app_name', 'campus_name', 'campus_address', 'campus_phone', 'campus_website', 'mode', 'timezone', 'updatedByUid', 'updatedAt'])
+        && data.campusId == 'stekom'
+        && data.app_name is string && data.app_name.size() >= 1 && data.app_name.size() <= 150
+        && data.campus_name is string && data.campus_name.size() >= 1 && data.campus_name.size() <= 150
+        && (!('campus_address' in data) || (data.campus_address is string && data.campus_address.size() <= 300))
+        && (!('campus_phone' in data) || (data.campus_phone is string && data.campus_phone.size() <= 80))
+        && (!('campus_website' in data) || (data.campus_website is string && data.campus_website.size() <= 150))
+        && data.mode in ['demo', 'production_synced']
+        && data.timezone is string && data.timezone.size() >= 1 && data.timezone.size() <= 60
+        && data.updatedByUid == request.auth.uid
+        && data.updatedAt == request.time;
+    }
+
+    // Boot connection test sentinel
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // Users collection (PII protected)
+    match /users/{userId} {
+      allow get: if isVerifiedEmail() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isVerifiedEmail() && (resource.data.uid == request.auth.uid || isAdminBootstrapEmail() || isAdmin());
+      allow create: if isVerifiedEmail()
+        && isValidId(userId)
+        && isValidUserCreate(incoming(), userId)
+        && (
+          isAdmin()
+          || incoming().role == 'Viewer'
+          || ('inviteId' in incoming() && hasValidInvite(incoming().inviteId, incoming().role))
+        );
+      allow update: if isVerifiedEmail()
+        && isValidId(userId)
+        && isValidUserUpdate(incoming(), existing())
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role', 'department', 'phone', 'updatedAt']))
+          || (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'phone', 'updatedAt']))
+        );
+      allow delete: if isVerifiedEmail() && isValidId(userId) && isAdmin() && request.auth.uid != userId;
+    }
+
+    // Pre-approved user role invites (PII protected)
+    match /user_invites/{inviteId} {
+      allow get: if isVerifiedEmail() && isValidId(inviteId) && (isAdmin() || existing().email.lower() == authEmail());
+      allow list: if isVerifiedEmail() && (resource.data.email.lower() == authEmail() || isAdminBootstrapEmail() || isAdmin());
+      allow create: if isVerifiedEmail() && isValidId(inviteId) && isValidInviteCreate(incoming(), inviteId) && isAdmin();
+      allow update: if isVerifiedEmail()
+        && isValidId(inviteId)
+        && isValidInviteUpdate(incoming(), existing())
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'role', 'department', 'phone', 'updatedAt']);
+      allow delete: if isVerifiedEmail() && isValidId(inviteId) && (isAdmin() || existing().email.lower() == authEmail());
+    }
+
+    // Rooms collection
+    match /rooms/{roomId} {
+      allow get: if isVerifiedEmail() && isValidId(roomId);
+      allow list: if isVerifiedEmail() && resource.data.campusId == 'stekom';
+      allow create: if isVerifiedEmail() && isValidId(roomId) && isValidRoomCreate(incoming(), roomId) && isOperatorOrAdmin();
+      allow update: if isVerifiedEmail()
+        && isValidId(roomId)
+        && isValidRoomUpdate(incoming(), existing())
+        && isOperatorOrAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'capacity', 'is_general', 'floor', 'building', 'facilities', 'status', 'notes', 'updatedByUid', 'updatedAt']);
+      allow delete: if isVerifiedEmail() && isValidId(roomId) && isAdmin();
+    }
+
+    // Events collection
+    match /events/{eventId} {
+      allow get: if isVerifiedEmail() && isValidId(eventId);
+      allow list: if isVerifiedEmail() && resource.data.campusId == 'stekom';
+      allow create: if isVerifiedEmail() && isValidId(eventId) && isValidEventCreate(incoming(), eventId) && isOperatorOrAdmin();
+      allow update: if isVerifiedEmail()
+        && isValidId(eventId)
+        && isValidEventUpdate(incoming(), existing())
+        && isOperatorOrAdmin()
+        && (
+          isAdmin()
+          || (
+            existing().status != 'Dibatalkan'
+            && (
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+              || incoming().diff(existing()).affectedKeys().hasOnly(['nama_event', 'tanggal', 'jam_mulai', 'jam_selesai', 'jumlah_peserta', 'pic', 'nomor_hp_pic', 'ruangan_ids', 'status', 'catatan', 'updatedAt'])
+            )
+          )
+        );
+      allow delete: if isVerifiedEmail() && isValidId(eventId) && isOperatorOrAdmin();
+    }
+
+    // Immutable Audit Logs
+    match /audit_logs/{logId} {
+      allow get: if isVerifiedEmail() && isValidId(logId) && (existing().actorUid == request.auth.uid || isOperatorOrAdmin());
+      allow list: if isVerifiedEmail() && (resource.data.campusId == 'stekom' || resource.data.actorUid == request.auth.uid);
+      allow create: if isVerifiedEmail() && isValidId(logId) && isValidAuditLogCreate(incoming(), logId);
+      allow update, delete: if false;
+    }
+
+    // System Settings
+    match /settings/{settingId} {
+      allow get: if isVerifiedEmail() && isValidId(settingId) && settingId == 'campus';
+      allow list: if false;
+      allow create: if isVerifiedEmail() && isValidId(settingId) && settingId == 'campus' && isValidSettings(incoming()) && isAdmin();
+      allow update: if isVerifiedEmail()
+        && isValidId(settingId)
+        && settingId == 'campus'
+        && isValidSettings(incoming())
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['app_name', 'campus_name', 'campus_address', 'campus_phone', 'campus_website', 'mode', 'timezone', 'updatedByUid', 'updatedAt']);
+      allow delete: if false;
+    }
+  }
+}

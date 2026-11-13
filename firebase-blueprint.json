@@ -1,0 +1,163 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated campus user profile and RBAC role assignment",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "email": { "type": "string", "format": "email", "minLength": 3, "maxLength": 150 },
+        "role": { "type": "string", "enum": ["Administrator", "Operator", "Viewer"] },
+        "department": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "inviteId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "role", "createdAt", "updatedAt"]
+    },
+    "UserInvite": {
+      "title": "UserInvite",
+      "description": "Pre-registered campus user role assignment created by an Administrator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "email": { "type": "string", "format": "email", "minLength": 3, "maxLength": 150 },
+        "role": { "type": "string", "enum": ["Administrator", "Operator", "Viewer"] },
+        "department": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Campus room master record at Universitas STEKOM",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "campusId": { "type": "string", "enum": ["stekom"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "capacity": { "type": "number" },
+        "is_general": { "type": "boolean" },
+        "floor": { "type": "string", "maxLength": 60 },
+        "building": { "type": "string", "maxLength": 120 },
+        "facilities": { "type": "array" },
+        "status": { "type": "string", "enum": ["Tersedia", "Pemeliharaan"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "updatedByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "campusId", "name", "code", "capacity", "is_general", "status", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "CampusEvent": {
+      "title": "CampusEvent",
+      "description": "Campus event schedule and room booking record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "campusId": { "type": "string", "enum": ["stekom"] },
+        "nama_event": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "tanggal": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "jam_mulai": { "type": "string", "pattern": "^[0-9]{2}:[0-9]{2}$" },
+        "jam_selesai": { "type": "string", "pattern": "^[0-9]{2}:[0-9]{2}$" },
+        "jumlah_peserta": { "type": "number" },
+        "pic": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "nomor_hp_pic": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "ruangan_ids": { "type": "array" },
+        "status": { "type": "string", "enum": ["Scheduled", "Menunggu Konfirmasi", "Dibatalkan"] },
+        "catatan": { "type": "string", "maxLength": 1000 },
+        "created_by": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "campusId",
+        "nama_event",
+        "tanggal",
+        "jam_mulai",
+        "jam_selesai",
+        "jumlah_peserta",
+        "pic",
+        "nomor_hp_pic",
+        "ruangan_ids",
+        "status",
+        "created_by",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable activity audit trail for campus event operations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "campusId": { "type": "string", "enum": ["stekom"] },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "user_name": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "user_role": { "type": "string", "enum": ["Administrator", "Operator", "Viewer"] },
+        "action": { "type": "string", "enum": ["TAMBAH", "UBAH", "HAPUS", "KONFIRMASI", "BATALKAN", "RUANGAN_STATUS", "LOGIN", "LOGOUT", "PENGATURAN"] },
+        "target_type": { "type": "string", "enum": ["Event", "Ruangan", "Pengguna", "Sistem"] },
+        "target_id": { "type": "string", "maxLength": 128 },
+        "target_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "details": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "campusId", "actorUid", "user_name", "user_role", "action", "target_type", "target_name", "details", "createdAt"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Campus system configuration document",
+      "type": "object",
+      "properties": {
+        "campusId": { "type": "string", "enum": ["stekom"] },
+        "app_name": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "campus_name": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "campus_address": { "type": "string", "maxLength": 300 },
+        "campus_phone": { "type": "string", "maxLength": 80 },
+        "campus_website": { "type": "string", "maxLength": 150 },
+        "mode": { "type": "string", "enum": ["demo", "production_synced"] },
+        "timezone": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "updatedByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["campusId", "app_name", "campus_name", "mode", "timezone", "updatedByUid", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles keyed by Firebase Auth UID"
+    },
+    "/user_invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/UserInvite" },
+      "description": "Pre-approved email role grants created by Administrators"
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Campus rooms master directory"
+    },
+    "/events/{eventId}": {
+      "schema": { "$ref": "#/entities/CampusEvent" },
+      "description": "Campus event schedules and room bookings"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable activity audit log records"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSettings" },
+      "description": "Global campus configuration document (campus)"
+    }
+  }
+}

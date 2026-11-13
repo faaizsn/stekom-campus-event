@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  RefreshCw,
   X
 } from 'lucide-react';
-import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { EventDetailModal } from './components/EventDetailModal';
 import { EventFormModal } from './components/EventFormModal';
 import { LoginView } from './components/LoginView';
 import { MonthlyRecapModal } from './components/MonthlyRecapModal';
 import { Navbar } from './components/Navbar';
 import { ActiveTab, Sidebar } from './components/Sidebar';
-import { api, getStoredToken } from './services/api';
+import { api, syncFirebaseUserProfile } from './services/api';
 import {
   AuditLog,
   CampusEvent,
@@ -38,10 +38,90 @@ const DEFAULT_FILTERS: FilterOptions = {
   search: ''
 };
 
-export default function App() {
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+  detailPath?: string;
+}
+
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    let errorMessage = error?.message || 'Terjadi kesalahan pada aplikasi.';
+    let detailPath: string | undefined;
+    try {
+      const parsed = JSON.parse(errorMessage);
+      if (parsed && typeof parsed.error === 'string') {
+        errorMessage = parsed.error;
+        detailPath = parsed.path;
+      }
+    } catch {
+      // plain text error
+    }
+    return { hasError: true, errorMessage, detailPath };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#f6f4ef] flex items-center justify-center p-6">
+          <div className="bg-[#FCFBF8] border border-stone-200 rounded-[26px] shadow-xl max-w-md w-full p-6 space-y-4 text-xs">
+            <div className="flex items-center space-x-2.5 text-rose-700">
+              <AlertTriangle className="w-6 h-6 shrink-0" strokeWidth={1.75} />
+              <h2 className="text-base font-extrabold text-stone-900">
+                Terjadi Kendala Sistem
+              </h2>
+            </div>
+            <p className="text-stone-600 leading-relaxed">{this.state.errorMessage}</p>
+            {this.state.detailPath && (
+              <p className="text-[11px] font-mono bg-[#F7F5F0] px-3 py-1.5 rounded-xl border border-stone-200 text-stone-500">
+                Path: {this.state.detailPath}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold transition"
+            >
+              <RefreshCw className="w-4 h-4" strokeWidth={1.75} />
+              <span>Muat Ulang Aplikasi</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function formatReadableError(err: any, fallback: string): string {
+  const raw = err?.message || '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.error === 'string') {
+      if (parsed.error.toLowerCase().includes('permission') || parsed.error.toLowerCase().includes('insufficient')) {
+        return `Akses Firestore ditolak untuk operasi ini (${parsed.path || 'data'}). Hubungi Administrator.`;
+      }
+      return parsed.error;
+    }
+  } catch {
+    // not JSON
+  }
+  return raw || fallback;
+}
+
+function AppContent() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const syncedUidRef = useRef<string | null>(null);
 
   // Navigation & UI State
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -49,7 +129,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
 
-  // Data State
+  const serverStatus = {
+    online: true,
+    persistence: 'Firebase Cloud Firestore (Real-Time)',
+    mode: 'firestore'
+  };
+
+  // Real-time Data State
   const [rooms, setRooms] = useState<Room[]>([]);
   const [events, setEvents] = useState<CampusEvent[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -62,7 +148,6 @@ export default function App() {
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [monthlyRecapOpen, setMonthlyRecapOpen] = useState(false);
-  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [recapMonth, setRecapMonth] = useState('11');
   const [recapYear, setRecapYear] = useState('2026');
   const [selectedEvent, setSelectedEvent] = useState<CampusEvent | null>(null);
@@ -84,62 +169,111 @@ export default function App() {
     }, 4500);
   }, []);
 
-  // Fetch initial data from server (respecting role access)
-  const loadInitialData = useCallback(
-    async (user: User) => {
-      try {
-        setLoading(true);
-        const [roomsData, eventsData, usersData, logsData] = await Promise.all([
-          api.getRooms().catch(() => []),
-          api.getEvents().catch(() => []),
-          user.role === 'Administrator' ? api.getUsers().catch(() => []) : Promise.resolve([]),
-          user.role === 'Administrator' || user.role === 'Operator'
-            ? api.getAuditLogs().catch(() => [])
-            : Promise.resolve([])
-        ]);
-
-        setRooms(roomsData);
-        setEvents(eventsData);
-        setUsers(usersData);
-        setAuditLogs(logsData);
-      } catch (err: any) {
-        console.error('Failed to load data:', err);
-        showToast('error', 'Gagal memuat data dari server. Periksa koneksi backend.');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [showToast]
-  );
-
-  // Check existing login session on mount
+  // Observe Firebase Auth state cleanly across reloads/tabs
   useEffect(() => {
     let active = true;
-    const restoreSession = async () => {
-      const token = getStoredToken();
-      if (!token) {
+    const unsubscribeAuth = api.observeAuth(async (firebaseUser) => {
+      if (!active) return;
+
+      if (!firebaseUser) {
+        syncedUidRef.current = null;
+        setCurrentUser(null);
+        setRooms([]);
+        setEvents([]);
+        setUsers([]);
+        setAuditLogs([]);
+        setAuthChecking(false);
+        return;
+      }
+
+      if (syncedUidRef.current === firebaseUser.uid) {
         if (active) setAuthChecking(false);
         return;
       }
 
       try {
-        const user = await api.getMe();
+        const profile = await syncFirebaseUserProfile(firebaseUser);
         if (active) {
-          setCurrentUser(user);
-          await loadInitialData(user);
+          syncedUidRef.current = firebaseUser.uid;
+          setCurrentUser(profile);
         }
-      } catch {
-        // Token expired/invalid; fallback to Login screen
+      } catch (err: any) {
+        console.error('Failed to sync Firebase user profile:', err);
+        if (active) {
+          showToast('error', formatReadableError(err, 'Gagal memuat profil akun Google.'));
+        }
       } finally {
         if (active) setAuthChecking(false);
       }
-    };
+    });
 
-    restoreSession();
     return () => {
       active = false;
+      unsubscribeAuth();
     };
-  }, [loadInitialData]);
+  }, [showToast]);
+
+  // Attach real-time Firestore listeners scoped by user role
+  useEffect(() => {
+    if (!currentUser) return;
+
+    setLoading(true);
+    let roomsArrived = false;
+    let eventsArrived = false;
+
+    const markReadyIfBothArrived = () => {
+      if (roomsArrived && eventsArrived) {
+        setLoading(false);
+      }
+    };
+
+    const handleSubError = (err: Error) => {
+      setLoading(false);
+      showToast('error', formatReadableError(err, 'Gagal menyinkronkan data Cloud Firestore.'));
+    };
+
+    const unsubs: Array<() => void> = [];
+
+    unsubs.push(
+      api.subscribeRooms((list) => {
+        setRooms(list);
+        roomsArrived = true;
+        markReadyIfBothArrived();
+      }, handleSubError)
+    );
+
+    unsubs.push(
+      api.subscribeEvents((list) => {
+        setEvents(list);
+        eventsArrived = true;
+        markReadyIfBothArrived();
+      }, handleSubError)
+    );
+
+    if (currentUser.role !== 'Viewer') {
+      unsubs.push(
+        api.subscribeAuditLogs((list) => {
+          setAuditLogs(list);
+        }, handleSubError)
+      );
+    } else {
+      setAuditLogs([]);
+    }
+
+    if (currentUser.role === 'Administrator') {
+      unsubs.push(
+        api.subscribeUsers((list) => {
+          setUsers(list);
+        }, handleSubError)
+      );
+    } else {
+      setUsers([]);
+    }
+
+    return () => {
+      unsubs.forEach((unsub) => unsub());
+    };
+  }, [currentUser?.id, currentUser?.role, showToast]);
 
   // Enforce RBAC tab guard
   useEffect(() => {
@@ -152,14 +286,16 @@ export default function App() {
   }, [activeTab, currentUser]);
 
   const handleLoginSuccess = async (user: User) => {
+    syncedUidRef.current = user.id;
     setCurrentUser(user);
     setActiveTab('dashboard');
-    await loadInitialData(user);
     showToast('success', `Selamat datang, ${user.name} (${user.role})`);
   };
 
   const handleLogout = async () => {
-    await api.logout();
+    const actor = currentUser;
+    syncedUidRef.current = null;
+    await api.logout(actor);
     setCurrentUser(null);
     setRooms([]);
     setEvents([]);
@@ -167,7 +303,6 @@ export default function App() {
     setAuditLogs([]);
     setActiveTab('dashboard');
     setMobileMenuOpen(false);
-    setChangePasswordOpen(false);
     showToast('success', 'Anda telah keluar (logout) dari sistem.');
   };
 
@@ -198,19 +333,14 @@ export default function App() {
     if (!currentUser) return;
     try {
       if (eventData.id) {
-        const updated = await api.updateEvent(eventData.id, eventData, currentUser);
-        setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+        const updated = await api.updateEvent(eventData.id, eventData, currentUser, events, rooms);
         showToast('success', `Jadwal event "${updated.nama_event}" berhasil diperbarui.`);
       } else {
-        const created = await api.createEvent(eventData, currentUser);
-        setEvents((prev) => [created, ...prev]);
+        const created = await api.createEvent(eventData, currentUser, events, rooms);
         showToast('success', `Event baru "${created.nama_event}" berhasil diajukan & dijadwalkan.`);
       }
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal menyimpan event');
+      showToast('error', formatReadableError(err, 'Gagal menyimpan event'));
       throw err;
     }
   };
@@ -220,14 +350,10 @@ export default function App() {
     if (!currentUser) return;
     try {
       const target = events.find((e) => e.id === id);
-      await api.deleteEvent(id, currentUser.name, currentUser.role);
-      setEvents((prev) => prev.filter((e) => e.id !== id));
+      await api.deleteEvent(id, currentUser, target?.nama_event);
       showToast('success', `Event "${target?.nama_event || id}" berhasil dihapus.`);
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal menghapus event');
+      showToast('error', formatReadableError(err, 'Gagal menghapus event'));
     }
   };
 
@@ -263,14 +389,10 @@ export default function App() {
     }
 
     try {
-      const updated = await api.updateEvent(id, { status: newStatus }, currentUser);
-      setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      await api.updateEvent(id, { status: newStatus }, currentUser, events, rooms);
       showToast('success', `Status event diubah menjadi: ${newStatus}`);
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal mengubah status event');
+      showToast('error', formatReadableError(err, 'Gagal mengubah status event'));
       throw err;
     }
   };
@@ -280,13 +402,9 @@ export default function App() {
     if (!currentUser) return;
     try {
       const result = await api.updateRoom(id, updated, currentUser);
-      setRooms((prev) => prev.map((r) => (r.id === result.id ? result : r)));
       showToast('success', `Data ruangan "${result.name}" berhasil diperbarui.`);
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal memperbarui data ruangan');
+      showToast('error', formatReadableError(err, 'Gagal memperbarui data ruangan'));
       throw err;
     }
   };
@@ -295,33 +413,24 @@ export default function App() {
     if (!currentUser) return;
     try {
       const result = await api.createRoom(newRoom, currentUser);
-      setRooms((prev) => [...prev, result]);
       showToast('success', `Ruangan baru "${result.name}" berhasil ditambahkan.`);
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal menambahkan ruangan');
+      showToast('error', formatReadableError(err, 'Gagal menambahkan ruangan'));
       throw err;
     }
   };
 
-  // User Management Actions
-  const handleAddUser = async (newUserData: Partial<User> & { password?: string }) => {
+  // User Management Actions (Google Auth Role Invitations & Updates)
+  const handleAddUser = async (newUserData: Partial<User>) => {
     if (!currentUser) return;
     try {
       const user = await api.createUser(newUserData, currentUser);
-      setUsers((prev) => [...prev, user]);
-      const passInfo = newUserData.password ? 'sesuai kata sandi yang diisi' : 'default: stekom123';
       showToast(
         'success',
-        `Pengguna "${user.name}" (${user.role}) siap digunakan untuk login (${user.email}, sandi ${passInfo}).`
+        `Akses "${user.name}" (${user.role}) tersimpan untuk email Google ${user.email}.`
       );
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal menambahkan pengguna');
+      showToast('error', formatReadableError(err, 'Gagal menambahkan pengguna'));
       throw err;
     }
   };
@@ -329,29 +438,10 @@ export default function App() {
   const handleUpdateUser = async (userId: string, data: Partial<User>) => {
     if (!currentUser) return;
     try {
-      const updated = await api.updateUser(userId, data, currentUser);
-      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
-      showToast('success', `Data pengguna "${updated.name}" (${updated.role}) berhasil diperbarui.`);
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
+      await api.updateUser(userId, data, currentUser);
+      showToast('success', 'Data & peran pengguna berhasil diperbarui.');
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal memperbarui data pengguna');
-      throw err;
-    }
-  };
-
-  const handleResetUserPassword = async (userId: string, newPassword: string) => {
-    if (!currentUser) return;
-    try {
-      const updated = await api.updateUser(userId, { new_password: newPassword }, currentUser);
-      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
-      showToast('success', `Kata sandi untuk "${updated.name}" berhasil direset.`);
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
-    } catch (err: any) {
-      showToast('error', err.message || 'Gagal mereset kata sandi pengguna');
+      showToast('error', formatReadableError(err, 'Gagal memperbarui data pengguna'));
       throw err;
     }
   };
@@ -359,14 +449,11 @@ export default function App() {
   const handleDeleteUser = async (id: string) => {
     if (!currentUser) return;
     try {
-      await api.deleteUser(id, currentUser.name, currentUser.role);
-      setUsers((prev) => prev.filter((u) => u.id !== id));
-      showToast('success', 'Pengguna berhasil dihapus.');
-
-      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
-      setAuditLogs(refreshedLogs);
+      const target = users.find((u) => u.id === id);
+      await api.deleteUser(id, currentUser, target?.name);
+      showToast('success', 'Akses pengguna berhasil dihapus.');
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal menghapus pengguna');
+      showToast('error', formatReadableError(err, 'Gagal menghapus pengguna'));
     }
   };
 
@@ -374,28 +461,27 @@ export default function App() {
   const handleResetData = async () => {
     if (!currentUser) return;
     try {
-      await api.resetData(currentUser.name, currentUser.role);
-      await loadInitialData(currentUser);
-      showToast('success', 'Data contoh Universitas STEKOM berhasil dipulihkan.');
+      await api.resetData(currentUser);
+      showToast('success', 'Data contoh Universitas STEKOM berhasil dipulihkan ke Cloud Firestore.');
     } catch (err: any) {
-      showToast('error', err.message || 'Gagal me-reset data');
+      showToast('error', formatReadableError(err, 'Gagal me-reset data'));
       throw err;
     }
   };
 
-  // Checking existing token
+  // Checking existing Firebase Auth session
   if (authChecking) {
     return (
       <div className="min-h-screen bg-[#f6f4ef] flex flex-col items-center justify-center space-y-3">
         <div className="w-10 h-10 border-4 border-blue-700 border-t-transparent rounded-full animate-spin" />
         <p className="text-xs font-semibold text-stone-600">
-          Memeriksa sesi login STEKOM Campus Event...
+          Memeriksa sesi Firebase STEKOM Campus Event...
         </p>
       </div>
     );
   }
 
-  // Unauthenticated -> Show Login Screen
+  // Unauthenticated -> Show Google Login Screen
   if (!currentUser) {
     return (
       <>
@@ -430,13 +516,8 @@ export default function App() {
         currentUser={currentUser}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
-        serverStatus={{
-          online: true,
-          persistence: api.isLocalMode() ? 'Browser Storage (Statis)' : 'File System (db.json)',
-          mode: api.isLocalMode() ? 'local' : 'server'
-        }}
+        serverStatus={serverStatus}
         onOpenSettings={() => setActiveTab('settings')}
-        onOpenChangePassword={() => setChangePasswordOpen(true)}
         onLogout={handleLogout}
       />
 
@@ -455,7 +536,6 @@ export default function App() {
             totalRooms: rooms.length
           }}
           onOpenMonthlyRecap={() => handleOpenMonthlyRecap()}
-          onOpenChangePassword={() => setChangePasswordOpen(true)}
           onLogout={handleLogout}
         />
 
@@ -465,7 +545,7 @@ export default function App() {
             <div className="py-24 flex flex-col items-center justify-center space-y-3">
               <div className="w-10 h-10 border-4 border-blue-700 border-t-transparent rounded-full animate-spin" />
               <p className="text-xs font-semibold text-stone-500">
-                Memuat data event dan 21 ruangan STEKOM...
+                Menyinkronkan data event dan 21 ruangan STEKOM dari Cloud Firestore...
               </p>
             </div>
           ) : (
@@ -551,7 +631,6 @@ export default function App() {
                   currentUser={currentUser}
                   onAddUser={handleAddUser}
                   onUpdateUser={handleUpdateUser}
-                  onResetPassword={handleResetUserPassword}
                   onDeleteUser={handleDeleteUser}
                 />
               )}
@@ -608,14 +687,6 @@ export default function App() {
         initialYear={recapYear}
       />
 
-      {/* Change Password Modal */}
-      <ChangePasswordModal
-        isOpen={changePasswordOpen}
-        onClose={() => setChangePasswordOpen(false)}
-        userEmail={currentUser.email}
-        onSuccessToast={(msg) => showToast('success', msg)}
-      />
-
       {/* Floating Toast Notification */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border border-stone-200 text-xs font-semibold animate-in slide-in-from-bottom-5 duration-200 bg-[#FCFBF8]">
@@ -638,5 +709,13 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
   );
 }

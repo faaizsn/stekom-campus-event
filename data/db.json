@@ -553,7 +553,7 @@
       "department": "Biro Administrasi Akademik & Sarpras",
       "phone": "081234567890",
       "created_at": "2026-01-01T08:00:00.000Z",
-      "password_hash": "e3fbcdbd120a02f3b81ac8447c8d5963:f7e7b29af42973e620b9d85e583f93ee16e1e0365a463232bde00077291ecaa8236bb5a7614279ececb30d6b96cb3f1a0c12061994f943324faa4ae36d22fde8"
+      "password_hash": "4158dc19c7777ee3f8ad9edd8190744b:44bb45337df092740b72f05b554739d308a9ff711649ff3b2c2df7a173150027aff67578b00a5825ba73d992e16a1fdcbc4f0f518ebcb3b86a5408108d292350"
     },
     {
       "id": "user-operator",
@@ -563,7 +563,7 @@
       "department": "Bagian Rumah Tangga & Penjadwalan",
       "phone": "081398765432",
       "created_at": "2026-01-05T08:00:00.000Z",
-      "password_hash": "9c0de37ea1adc05a945ac50d2e463298:92ce3ef22b6ca483aa2923a5c4242284679003667e5841f735619ab8add84fde95f5b89425a1c347baacdd6494cc41ea5a14c9ba9302e5ff12bb107a40895791"
+      "password_hash": "50c7309e9b110d591963289cd036a7ee:5ea3cc57f3bd011fdf7dc29c48ad3c518f326fb2da936dc7e0bb783d5e8887942ffd85b326da4b6d570eac677d194910a7ed2310cf06465d9d4379838bbae875"
     },
     {
       "id": "user-viewer",
@@ -573,10 +573,21 @@
       "department": "BEM Universitas STEKOM",
       "phone": "085712349988",
       "created_at": "2026-02-01T08:00:00.000Z",
-      "password_hash": "0079f8f8e93bdbf51d9b13efe1f65d86:2d8d352f2dadd5a4ad1534ac098f48f2233a0b2d0ef0d08c0e3eb8e3441f7be10c1836e7c3ec0b79bb3e6ab69547f61ff1f31cd1db626af232484426aedc0c30"
+      "password_hash": "237c076161c5cbf4d3c68cfb2d33a437:7afb7d1526daa39a1c166769794fe45a004cb2a51b4d27da710f4e2d7192bb614e75769f9965da9138a2c6d1754b9b5eb546cbc369ef3ffe7c2cfafb49c3386b"
     }
   ],
   "audit_logs": [
+    {
+      "id": "log-1794544101254",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "LOGOUT",
+      "target_type": "Sistem",
+      "target_id": "user-admin",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Dr. Ir. Agus Wibowo, M.Kom (admin@stekom.ac.id) keluar (logout) dari sistem",
+      "timestamp": "2026-11-13T04:28:21.254Z"
+    },
     {
       "id": "log-001",
       "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
@@ -622,7 +633,7 @@
       "timestamp": "2026-11-06T09:00:00.000Z"
     },
     {
-      "id": "log-1794542651648",
+      "id": "log-1794544101249",
       "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
       "user_role": "Administrator",
       "action": "PENGATURAN",
@@ -630,7 +641,7 @@
       "target_id": "sys-reset",
       "target_name": "Database Reset",
       "details": "Melakukan reset data contoh awal Universitas STEKOM",
-      "timestamp": "2026-11-13T04:04:11.648Z"
+      "timestamp": "2026-11-13T04:28:21.249Z"
     }
   ],
   "system_settings": {
@@ -642,6 +653,6 @@
     "mode": "demo",
     "firebase_configured": false,
     "timezone": "Asia/Jakarta (WIB)",
-    "updated_at": "2026-11-13T04:04:11.648Z"
+    "updated_at": "2026-11-13T04:28:21.249Z"
   }
 }
