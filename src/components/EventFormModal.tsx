@@ -21,6 +21,7 @@ interface EventFormModalProps {
   onSave: (eventData: Partial<CampusEvent>) => Promise<void>;
   initialEvent?: CampusEvent | null;
   initialDate?: string;
+  initialRoomId?: string;
   allEvents: CampusEvent[];
   rooms: Room[];
 }
@@ -31,6 +32,7 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
   onSave,
   initialEvent,
   initialDate,
+  initialRoomId,
   allEvents,
   rooms
 }) => {
@@ -71,13 +73,13 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
         setJumlahPeserta(30);
         setPic('');
         setNomorHpPic('');
-        setSelectedRoomIds([]);
+        setSelectedRoomIds(initialRoomId ? [initialRoomId] : []);
         setStatus('Menunggu Konfirmasi');
         setCatatan('');
       }
       setErrorMsg(null);
     }
-  }, [isOpen, initialEvent, initialDate]);
+  }, [isOpen, initialEvent, initialDate, initialRoomId]);
 
   // Real-time conflict checking
   const conflictCheck = useMemo(() => {

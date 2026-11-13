@@ -388,7 +388,13 @@ export const api = {
 
   // Dashboard Stats
   async getStats() {
+    if (shouldUseLocalMode()) {
+      return localFallback.getStats(getStoredToken());
+    }
     const res = await authFetch(`${API_BASE}/stats`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getStats(getStoredToken());
+    }
     if (!res.ok) throw new Error('Gagal memuat statistik dashboard');
     return res.json();
   },

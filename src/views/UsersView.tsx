@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import {
   AlertCircle,
+  Edit3,
+  Eye,
+  EyeOff,
   Info,
   KeyRound,
   Mail,
@@ -19,6 +22,7 @@ interface UsersViewProps {
   users: User[];
   currentUser: User;
   onAddUser: (user: Partial<User> & { password?: string }) => Promise<void>;
+  onUpdateUser: (userId: string, data: Partial<User>) => Promise<void>;
   onResetPassword: (userId: string, newPassword: string) => Promise<void>;
   onDeleteUser: (id: string) => Promise<void>;
 }
@@ -27,6 +31,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
   users,
   currentUser,
   onAddUser,
+  onUpdateUser,
   onResetPassword,
   onDeleteUser
 }) => {
@@ -34,15 +39,27 @@ export const UsersView: React.FC<UsersViewProps> = ({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<UserRole>('Operator');
   const [department, setDepartment] = useState('Biro Sarana Prasarana');
   const [phone, setPhone] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Edit User Modal
+  const [editTarget, setEditTarget] = useState<User | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editRole, setEditRole] = useState<UserRole>('Operator');
+  const [editDepartment, setEditDepartment] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+
   // Reset Password Modal
   const [resetTarget, setResetTarget] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetLoading, setResetLoading] = useState(false);
 
@@ -56,7 +73,13 @@ export const UsersView: React.FC<UsersViewProps> = ({
       setFormError('Nama lengkap dan email wajib diisi.');
       return;
     }
-    if (password.trim() && password.trim().length < 6) {
+
+    const hasPasswordInput = password.trim().length > 0;
+    if (hasPasswordInput && password !== password.trim()) {
+      setFormError('Kata sandi tidak boleh diawali atau diakhiri spasi.');
+      return;
+    }
+    if (hasPasswordInput && password.length < 6) {
       setFormError('Kata sandi awal minimal 6 karakter (atau kosongkan untuk default: stekom123).');
       return;
     }
@@ -65,16 +88,18 @@ export const UsersView: React.FC<UsersViewProps> = ({
       setLoading(true);
       await onAddUser({
         name: name.trim(),
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         role,
         department: department.trim(),
         phone: phone.trim(),
-        password: password.trim() || undefined
+        password: hasPasswordInput ? password : 'stekom123'
       });
       setModalOpen(false);
       setName('');
       setEmail('');
       setPassword('');
+      setShowPassword(false);
+      setRole('Operator');
       setPhone('');
     } catch (err: any) {
       setFormError(err.message || 'Gagal menambahkan pengguna');
@@ -83,19 +108,60 @@ export const UsersView: React.FC<UsersViewProps> = ({
     }
   };
 
+  const openEditModal = (u: User) => {
+    setEditTarget(u);
+    setEditName(u.name);
+    setEditEmail(u.email);
+    setEditRole(u.role);
+    setEditDepartment(u.department || '');
+    setEditPhone(u.phone || '');
+    setEditError(null);
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editTarget) return;
+    setEditError(null);
+    if (!editName.trim() || !editEmail.trim()) {
+      setEditError('Nama lengkap dan email wajib diisi.');
+      return;
+    }
+
+    try {
+      setEditLoading(true);
+      await onUpdateUser(editTarget.id, {
+        name: editName.trim(),
+        email: editEmail.trim().toLowerCase(),
+        role: editRole,
+        department: editDepartment.trim(),
+        phone: editPhone.trim()
+      });
+      setEditTarget(null);
+    } catch (err: any) {
+      setEditError(err.message || 'Gagal memperbarui data pengguna');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetTarget) return;
     setResetError(null);
-    if (newPassword.trim().length < 6) {
+    if (newPassword !== newPassword.trim()) {
+      setResetError('Kata sandi baru tidak boleh diawali atau diakhiri spasi.');
+      return;
+    }
+    if (newPassword.length < 6) {
       setResetError('Kata sandi baru minimal harus 6 karakter.');
       return;
     }
     try {
       setResetLoading(true);
-      await onResetPassword(resetTarget.id, newPassword.trim());
+      await onResetPassword(resetTarget.id, newPassword);
       setResetTarget(null);
       setNewPassword('');
+      setShowNewPassword(false);
     } catch (err: any) {
       setResetError(err.message || 'Gagal mereset kata sandi');
     } finally {
@@ -120,6 +186,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
         <button
           onClick={() => {
             setFormError(null);
+            setShowPassword(false);
             setModalOpen(true);
           }}
           className="inline-flex items-center space-x-2 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-blue-700 to-slate-800 hover:from-blue-800 hover:to-slate-900 active:scale-98 rounded-xl shadow-md shadow-blue-900/15 transition self-start sm:self-auto"
@@ -137,7 +204,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
             <span>Administrator</span>
           </div>
           <p className="text-[11px] text-stone-500 leading-relaxed">
-            Akses penuh: CRUD event, konfirmasi & pembatalan, manajemen 21 ruangan, kelola akun pengguna, reset kata sandi, audit log, dan pengaturan.
+            Akses penuh: Tambah/ubah jadwal event, konfirmasi Scheduled, kelola 21 ruangan, kelola akun pengguna, audit log, dan pengaturan.
           </p>
         </div>
 
@@ -147,7 +214,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
             <span>Operator</span>
           </div>
           <p className="text-[11px] text-stone-500 leading-relaxed">
-            Kelola event dan penjadwalan ruangan, memvalidasi status Scheduled/Dibatalkan, monitoring ruangan, dan mengunduh rekap bulanan.
+            Dapat menambah & mengelola jadwal event, mengubah status ke Scheduled/Dibatalkan, monitoring ruangan, dan mengunduh rekap bulanan.
           </p>
         </div>
 
@@ -157,21 +224,20 @@ export const UsersView: React.FC<UsersViewProps> = ({
             <span>Viewer</span>
           </div>
           <p className="text-[11px] text-stone-500 leading-relaxed">
-            Mode baca saja (Read-only): melihat dashboard, mengecek kalender acara, memantau ketersediaan ruangan, dan mengunduh rekap PDF/Excel.
+            Mode baca saja (Read-only): melihat dashboard, mengecek kalender, dan mengunduh rekap — <strong>tidak dapat menambah atau mengubah jadwal event</strong>.
           </p>
         </div>
       </div>
 
-      {/* Info Akun Bawaan & Kebijakan Sandi */}
+      {/* Info Akun & Kebijakan Sandi */}
       <div className="p-4 rounded-[22px] bg-[#FCFBF8] border border-stone-200/90 shadow-xs flex items-start space-x-3 text-xs">
         <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" strokeWidth={1.75} />
         <div className="space-y-1 text-stone-600 leading-relaxed">
-          <p className="font-bold text-stone-800">Informasi Akun & Kata Sandi Login</p>
+          <p className="font-bold text-stone-800">Informasi Login Pengguna Baru & Hak Akses Event</p>
           <p className="text-[11px]">
-            Akun bawaan: <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono text-stone-800">admin@stekom.ac.id</code> (sandi: <strong>admin123</strong>),{' '}
-            <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono text-stone-800">operator@stekom.ac.id</code> (sandi: <strong>operator123</strong>),{' '}
-            <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono text-stone-800">viewer@stekom.ac.id</code> (sandi: <strong>viewer123</strong>).{' '}
-            Pengguna baru yang dibuat tanpa mengisi kata sandi awal akan mendapatkan kata sandi default <strong>stekom123</strong>.
+            Pengguna baru yang dibuat tanpa mengisi kata sandi awal otomatis mendapatkan kata sandi default{' '}
+            <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono font-bold text-stone-800">stekom123</code>.
+            Pastikan memilih peran <strong>Operator</strong> atau <strong>Administrator</strong> jika akun tersebut akan digunakan untuk menambah dan menjadwalkan event.
           </p>
         </div>
       </div>
@@ -235,9 +301,19 @@ export const UsersView: React.FC<UsersViewProps> = ({
                     <td className="py-3.5 px-4 text-right">
                       <div className="inline-flex items-center space-x-1.5">
                         <button
+                          onClick={() => openEditModal(u)}
+                          className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-stone-700 bg-[#F7F5F0] hover:bg-stone-200/70 border border-stone-200 transition"
+                          title="Edit Data & Peran Pengguna"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          <span>Edit</span>
+                        </button>
+
+                        <button
                           onClick={() => {
                             setResetTarget(u);
                             setNewPassword('');
+                            setShowNewPassword(false);
                             setResetError(null);
                           }}
                           className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-blue-700 bg-blue-50/80 hover:bg-blue-100 border border-blue-200/70 transition"
@@ -307,7 +383,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-stone-700 mb-1">Email Kampus (@stekom.ac.id)</label>
+                <label className="block font-bold text-stone-700 mb-1">Email Login (@stekom.ac.id)</label>
                 <input
                   type="email"
                   required
@@ -322,13 +398,23 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <label className="block font-bold text-stone-700 mb-1">
                   Kata Sandi Awal <span className="text-stone-400 font-normal">(opsional, default: stekom123)</span>
                 </label>
-                <input
-                  type="password"
-                  placeholder="Kosongkan untuk pakai default: stekom123"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Kosongkan untuk pakai default: stekom123"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-3.5 pr-10 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-stone-400 hover:text-stone-700"
+                    title={showPassword ? 'Sembunyikan sandi' : 'Lihat sandi'}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -338,9 +424,9 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   onChange={(e) => setRole(e.target.value as UserRole)}
                   className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 font-bold"
                 >
-                  <option value="Operator">Operator (Kelola Event & Ruangan)</option>
-                  <option value="Administrator">Administrator (Akses Penuh)</option>
-                  <option value="Viewer">Viewer (Hanya Membaca)</option>
+                  <option value="Operator">Operator (Bisa Tambah & Kelola Jadwal Event)</option>
+                  <option value="Administrator">Administrator (Akses Penuh + Kelola Pengguna)</option>
+                  <option value="Viewer">Viewer (Hanya Lihat — Tidak Bisa Tambah Event)</option>
                 </select>
               </div>
 
@@ -387,6 +473,113 @@ export const UsersView: React.FC<UsersViewProps> = ({
         </div>
       )}
 
+      {/* Edit User Modal */}
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
+          <div className="bg-[#FCFBF8] rounded-[26px] shadow-2xl max-w-md w-full p-6 border border-stone-200/90 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200/80">
+              <div className="flex items-center space-x-2">
+                <Edit3 className="w-4 h-4 text-blue-700" strokeWidth={1.75} />
+                <h3 className="text-sm font-extrabold text-stone-900">Edit Data & Hak Akses Pengguna</h3>
+              </div>
+              <button
+                onClick={() => setEditTarget(null)}
+                className="p-1.5 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-100"
+              >
+                <X className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="space-y-4 py-4 text-xs">
+              {editError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" strokeWidth={1.75} />
+                  <span className="font-medium">{editError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">Nama Lengkap & Gelar</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">Email Login</label>
+                <input
+                  type="email"
+                  required
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">Peran Hak Akses (Role)</label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value as UserRole)}
+                  disabled={editTarget.id === currentUser.id}
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 font-bold disabled:opacity-60"
+                >
+                  <option value="Operator">Operator (Bisa Tambah & Kelola Jadwal Event)</option>
+                  <option value="Administrator">Administrator (Akses Penuh + Kelola Pengguna)</option>
+                  <option value="Viewer">Viewer (Hanya Lihat — Tidak Bisa Tambah Event)</option>
+                </select>
+                {editTarget.id === currentUser.id && (
+                  <p className="text-[10px] text-stone-400 mt-1">
+                    Peran akun yang sedang Anda gunakan tidak dapat diubah dari sini.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">Unit / Bagian</label>
+                <input
+                  type="text"
+                  value={editDepartment}
+                  onChange={(e) => setEditDepartment(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">Nomor Telepon / WhatsApp</label>
+                <input
+                  type="tel"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-stone-200/80 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setEditTarget(null)}
+                  className="px-3.5 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  className="px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl shadow-xs transition"
+                >
+                  {editLoading ? 'Menyimpan...' : 'Simpan Perubahan'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Reset Password Modal */}
       {resetTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
@@ -420,15 +613,25 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <label className="block font-bold text-stone-700 mb-1.5">
                   Kata Sandi Baru (min. 6 karakter)
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  placeholder="Masukkan kata sandi baru"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="Masukkan kata sandi baru"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full pl-3.5 pr-10 py-2.5 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-stone-400 hover:text-stone-700"
+                    title={showNewPassword ? 'Sembunyikan sandi' : 'Lihat sandi'}
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="pt-2 flex items-center justify-end space-x-2">

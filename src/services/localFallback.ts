@@ -549,6 +549,24 @@ function loadLocalDb(): LocalDatabase {
     if (raw) {
       const parsed = JSON.parse(raw) as LocalDatabase;
       if (Array.isArray(parsed.users) && Array.isArray(parsed.rooms) && Array.isArray(parsed.events)) {
+        let migrated = false;
+        if (parsed.rooms.length === 0) {
+          parsed.rooms = JSON.parse(JSON.stringify(INITIAL_ROOMS));
+          migrated = true;
+        }
+        if (parsed.users.length === 0) {
+          parsed.users = JSON.parse(JSON.stringify(INITIAL_USERS));
+          migrated = true;
+        }
+        for (const ev of parsed.events) {
+          if ((ev.status as string) === 'Dikonfirmasi') {
+            ev.status = 'Scheduled';
+            migrated = true;
+          }
+        }
+        if (migrated) {
+          saveLocalDb(parsed);
+        }
         return parsed;
       }
     }
@@ -1016,19 +1034,31 @@ export const localFallback = {
     const db = loadLocalDb();
     const email = String(user.email || '').trim().toLowerCase();
     const name = String(user.name || '').trim();
+    const rawPassword = typeof user.password === 'string' ? user.password : '';
+    const hasPasswordInput = rawPassword.trim().length > 0;
+
     if (!name || !email) throw new Error('Nama dan email pengguna wajib diisi.');
+    if (hasPasswordInput && rawPassword !== rawPassword.trim()) {
+      throw new Error('Kata sandi tidak boleh diawali atau diakhiri spasi.');
+    }
+    if (hasPasswordInput && rawPassword.length < 6) {
+      throw new Error('Kata sandi minimal 6 karakter.');
+    }
     if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
       throw new Error(`Email "${email}" sudah terdaftar dalam sistem.`);
     }
+    const validRoles: User['role'][] = ['Administrator', 'Operator', 'Viewer'];
+    const role: User['role'] = user.role && validRoles.includes(user.role) ? user.role : 'Operator';
+
     const newUser: LocalUserRecord = {
       id: `user-${Date.now()}`,
       name,
       email,
-      role: user.role || 'Operator',
-      department: user.department || 'Universitas STEKOM',
-      phone: user.phone || '',
+      role,
+      department: String(user.department || 'Universitas STEKOM').trim(),
+      phone: String(user.phone || '').trim(),
       created_at: new Date().toISOString(),
-      password: user.password?.trim() || 'stekom123'
+      password: hasPasswordInput ? rawPassword : 'stekom123'
     };
     db.users.push(newUser);
     db.audit_logs.unshift({
@@ -1053,14 +1083,38 @@ export const localFallback = {
     const idx = db.users.findIndex((u) => u.id === id);
     if (idx === -1) throw new Error('Pengguna tidak ditemukan');
     const prev = db.users[idx];
+
+    if (data.email !== undefined) {
+      const normalizedEmail = data.email.trim().toLowerCase();
+      if (!normalizedEmail) throw new Error('Email pengguna tidak boleh kosong.');
+      if (db.users.some((u) => u.id !== id && u.email.trim().toLowerCase() === normalizedEmail)) {
+        throw new Error(`Email "${normalizedEmail}" sudah digunakan pengguna lain.`);
+      }
+    }
+
+    const validRoles: User['role'][] = ['Administrator', 'Operator', 'Viewer'];
+    if (data.role !== undefined && !validRoles.includes(data.role)) {
+      throw new Error('Peran pengguna tidak valid.');
+    }
+
+    let updatedPassword = prev.password;
+    let passwordChanged = false;
+    if (data.new_password !== undefined && String(data.new_password).trim() !== '') {
+      const pw = String(data.new_password);
+      if (pw !== pw.trim()) throw new Error('Kata sandi baru tidak boleh diawali atau diakhiri spasi.');
+      if (pw.length < 6) throw new Error('Kata sandi baru minimal 6 karakter.');
+      updatedPassword = pw;
+      passwordChanged = true;
+    }
+
     const updated: LocalUserRecord = {
       ...prev,
       name: data.name !== undefined ? data.name.trim() : prev.name,
       email: data.email !== undefined ? data.email.trim().toLowerCase() : prev.email,
       role: data.role || prev.role,
-      department: data.department !== undefined ? data.department : prev.department,
-      phone: data.phone !== undefined ? data.phone : prev.phone,
-      password: data.new_password?.trim() ? data.new_password.trim() : prev.password
+      department: data.department !== undefined ? data.department.trim() : prev.department,
+      phone: data.phone !== undefined ? data.phone.trim() : prev.phone,
+      password: updatedPassword
     };
     db.users[idx] = updated;
     db.audit_logs.unshift({
@@ -1071,7 +1125,7 @@ export const localFallback = {
       target_type: 'Pengguna',
       target_id: updated.id,
       target_name: updated.name,
-      details: data.new_password?.trim()
+      details: passwordChanged
         ? `Mengubah data / mereset kata sandi pengguna ${updated.name} (Peran: ${updated.role})`
         : `Mengubah data pengguna ${updated.name} (Peran: ${updated.role})`,
       timestamp: new Date().toISOString()
@@ -1107,6 +1161,58 @@ export const localFallback = {
     const actor = requireLocalAuth(token);
     if (actor.role === 'Viewer') throw new Error('Akses ditolak.');
     return loadLocalDb().audit_logs;
+  },
+
+  getStats(token: string | null) {
+    requireLocalAuth(token);
+    const db = loadLocalDb();
+    const events = db.events;
+    const rooms = db.rooms;
+    const today = new Date().toISOString().split('T')[0];
+    const todayEvents = events.filter((e) => e.tanggal === today);
+    const upcomingEvents = events.filter((e) => e.tanggal >= today && e.status !== 'Dibatalkan');
+
+    const monthlyData: Record<string, { confirmed: number; pending: number; cancelled: number }> = {};
+    for (const e of events) {
+      const monthKey = e.tanggal.substring(0, 7);
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = { confirmed: 0, pending: 0, cancelled: 0 };
+      }
+      if (e.status === 'Scheduled') monthlyData[monthKey].confirmed++;
+      else if (e.status === 'Menunggu Konfirmasi') monthlyData[monthKey].pending++;
+      else if (e.status === 'Dibatalkan') monthlyData[monthKey].cancelled++;
+    }
+
+    const roomUsageMap: Record<string, number> = {};
+    rooms.forEach((r) => (roomUsageMap[r.id] = 0));
+    events.forEach((e) => {
+      if (e.status !== 'Dibatalkan') {
+        (e.ruangan_ids || []).forEach((rId) => {
+          roomUsageMap[rId] = (roomUsageMap[rId] || 0) + 1;
+        });
+      }
+    });
+
+    const roomUsageList = rooms
+      .map((r) => ({ room: r, usageCount: roomUsageMap[r.id] || 0 }))
+      .sort((a, b) => b.usageCount - a.usageCount);
+
+    const scheduledEvents = events.filter((e) => e.status === 'Scheduled').length;
+    return {
+      totalEvents: events.length,
+      scheduledEvents,
+      confirmedEvents: scheduledEvents,
+      pendingEvents: events.filter((e) => e.status === 'Menunggu Konfirmasi').length,
+      cancelledEvents: events.filter((e) => e.status === 'Dibatalkan').length,
+      todayEventsCount: todayEvents.length,
+      todayEvents,
+      upcomingEventsCount: upcomingEvents.length,
+      upcomingEvents: upcomingEvents.slice(0, 5),
+      monthlyData,
+      roomUsageList,
+      totalRooms: rooms.length,
+      totalUsers: db.users.length
+    };
   },
 
   getSettings(token: string | null) {

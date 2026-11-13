@@ -703,6 +703,10 @@ function getDatabase(): DatabaseSchema {
     if (fs.existsSync(DB_FILE)) {
       const data: DatabaseSchema = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
       let migrated = false;
+      if (!Array.isArray(data.rooms) || data.rooms.length === 0) {
+        data.rooms = INITIAL_ROOMS;
+        migrated = true;
+      }
       if (Array.isArray(data.events)) {
         for (const ev of data.events) {
           if ((ev.status as string) === 'Dikonfirmasi') {
@@ -710,8 +714,11 @@ function getDatabase(): DatabaseSchema {
             migrated = true;
           }
         }
+      } else {
+        data.events = INITIAL_EVENTS;
+        migrated = true;
       }
-      if (Array.isArray(data.users)) {
+      if (Array.isArray(data.users) && data.users.length > 0) {
         for (const u of data.users) {
           if (!u.password_hash) {
             u.password_hash = hashPassword(getDefaultPasswordForEmail(u.email));
@@ -1436,16 +1443,25 @@ async function startServer() {
     const actor = req.authUser!;
     const name = String(req.body?.name || '').trim();
     const email = String(req.body?.email || '').trim().toLowerCase();
-    const rawPassword = String(req.body?.password || '').trim();
-    const password = rawPassword || 'stekom123';
+    const rawPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+    const hasPasswordInput = rawPassword.trim().length > 0;
 
     if (!name || !email) {
       return res.status(400).json({ error: 'Nama dan email pengguna wajib diisi.' });
     }
 
-    if (rawPassword && rawPassword.length < 6) {
+    if (hasPasswordInput && rawPassword !== rawPassword.trim()) {
+      return res.status(400).json({ error: 'Kata sandi tidak boleh diawali atau diakhiri spasi.' });
+    }
+
+    if (hasPasswordInput && rawPassword.length < 6) {
       return res.status(400).json({ error: 'Kata sandi minimal 6 karakter.' });
     }
+
+    const password = hasPasswordInput ? rawPassword : 'stekom123';
+    const validRoles: Array<DbUser['role']> = ['Administrator', 'Operator', 'Viewer'];
+    const requestedRole = String(req.body?.role || 'Operator') as DbUser['role'];
+    const role: DbUser['role'] = validRoles.includes(requestedRole) ? requestedRole : 'Operator';
 
     if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
       return res.status(409).json({ error: `Email "${email}" sudah terdaftar dalam sistem.` });
@@ -1455,7 +1471,7 @@ async function startServer() {
       id: `user-${Date.now()}`,
       name,
       email,
-      role: req.body.role || 'Operator',
+      role,
       department: String(req.body.department || 'Universitas STEKOM').trim(),
       phone: String(req.body.phone || '').trim(),
       created_at: new Date().toISOString(),
@@ -1500,15 +1516,26 @@ async function startServer() {
 
     if (email !== undefined) {
       const normalizedEmail = String(email).trim().toLowerCase();
+      if (!normalizedEmail) {
+        return res.status(400).json({ error: 'Email pengguna tidak boleh kosong.' });
+      }
       if (db.users.some((u) => u.id !== prevUser.id && u.email.trim().toLowerCase() === normalizedEmail)) {
         return res.status(409).json({ error: `Email "${normalizedEmail}" sudah digunakan pengguna lain.` });
       }
     }
 
+    const validRoles: Array<DbUser['role']> = ['Administrator', 'Operator', 'Viewer'];
+    if (role !== undefined && !validRoles.includes(role)) {
+      return res.status(400).json({ error: 'Peran pengguna tidak valid.' });
+    }
+
     let updatedHash = prevUser.password_hash;
     let passwordChanged = false;
     if (new_password !== undefined && String(new_password).trim() !== '') {
-      const pw = String(new_password).trim();
+      const pw = String(new_password);
+      if (pw !== pw.trim()) {
+        return res.status(400).json({ error: 'Kata sandi baru tidak boleh diawali atau diakhiri spasi.' });
+      }
       if (pw.length < 6) {
         return res.status(400).json({ error: 'Kata sandi baru minimal 6 karakter.' });
       }

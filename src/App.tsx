@@ -68,6 +68,7 @@ export default function App() {
   const [selectedEvent, setSelectedEvent] = useState<CampusEvent | null>(null);
   const [editingEvent, setEditingEvent] = useState<CampusEvent | null>(null);
   const [initialDateForForm, setInitialDateForForm] = useState<string | undefined>(undefined);
+  const [initialRoomForForm, setInitialRoomForForm] = useState<string | undefined>(undefined);
 
   const handleOpenMonthlyRecap = (month?: string, year?: string) => {
     if (month) setRecapMonth(month);
@@ -177,9 +178,10 @@ export default function App() {
   };
 
   // Open Form Modal for New Event
-  const handleOpenCreateModal = (dateStr?: string) => {
+  const handleOpenCreateModal = (dateStr?: string, roomId?: string) => {
     setEditingEvent(null);
     setInitialDateForForm(dateStr || '2026-11-10');
+    setInitialRoomForForm(roomId);
     setFormModalOpen(true);
   };
 
@@ -187,6 +189,7 @@ export default function App() {
   const handleOpenEditModal = (event: CampusEvent) => {
     setEditingEvent(event);
     setInitialDateForForm(undefined);
+    setInitialRoomForForm(undefined);
     setFormModalOpen(true);
   };
 
@@ -309,12 +312,31 @@ export default function App() {
     try {
       const user = await api.createUser(newUserData, currentUser);
       setUsers((prev) => [...prev, user]);
-      showToast('success', `Pengguna "${user.name}" (${user.role}) berhasil ditambahkan.`);
+      const passInfo = newUserData.password ? 'sesuai kata sandi yang diisi' : 'default: stekom123';
+      showToast(
+        'success',
+        `Pengguna "${user.name}" (${user.role}) siap digunakan untuk login (${user.email}, sandi ${passInfo}).`
+      );
 
       const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
       setAuditLogs(refreshedLogs);
     } catch (err: any) {
       showToast('error', err.message || 'Gagal menambahkan pengguna');
+      throw err;
+    }
+  };
+
+  const handleUpdateUser = async (userId: string, data: Partial<User>) => {
+    if (!currentUser) return;
+    try {
+      const updated = await api.updateUser(userId, data, currentUser);
+      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      showToast('success', `Data pengguna "${updated.name}" (${updated.role}) berhasil diperbarui.`);
+
+      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
+      setAuditLogs(refreshedLogs);
+    } catch (err: any) {
+      showToast('error', err.message || 'Gagal memperbarui data pengguna');
       throw err;
     }
   };
@@ -505,9 +527,7 @@ export default function App() {
                   events={events}
                   userRole={currentUser.role}
                   onBookRoom={(roomId, dateStr) => {
-                    setEditingEvent(null);
-                    setInitialDateForForm(dateStr);
-                    setFormModalOpen(true);
+                    handleOpenCreateModal(dateStr, roomId);
                   }}
                   onSelectEvent={(ev) => {
                     setSelectedEvent(ev);
@@ -530,6 +550,7 @@ export default function App() {
                   users={users}
                   currentUser={currentUser}
                   onAddUser={handleAddUser}
+                  onUpdateUser={handleUpdateUser}
                   onResetPassword={handleResetUserPassword}
                   onDeleteUser={handleDeleteUser}
                 />
@@ -559,6 +580,7 @@ export default function App() {
         onSave={handleSaveEvent}
         initialEvent={editingEvent}
         initialDate={initialDateForForm}
+        initialRoomId={initialRoomForForm}
         allEvents={events}
         rooms={rooms}
       />
