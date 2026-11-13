@@ -34,16 +34,54 @@ export function setStoredToken(token: string | null) {
 
 function isBackendUnavailableResponse(res: Response): boolean {
   const contentType = (res.headers.get('content-type') || '').toLowerCase();
-  // Real Express API routes (even Express 404 fallback) always return JSON.
-  // Static file hosts / preview servers return non-JSON 404/405/502/503.
-  return (
-    (res.status === 404 || res.status === 405 || res.status === 502 || res.status === 503) &&
-    !contentType.includes('application/json')
-  );
+  // Real Express /api/* endpoints (including Express 404 JSON fallback) ALWAYS return application/json.
+  // Static hosts / SPA proxies return HTML, empty body, or plain text (even with status 200 or 404/405/502/503).
+  return !contentType.includes('application/json');
 }
 
 function shouldUseLocalMode(): boolean {
   return localFallback.isLocalToken(getStoredToken());
+}
+
+async function isExpressBackendOnline(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/status`);
+    if (!res.ok || isBackendUnavailableResponse(res)) return false;
+    const data = await res.json().catch(() => null);
+    return Boolean(data && data.status === 'online');
+  } catch {
+    return false;
+  }
+}
+
+async function syncUnsyncedLocalUsers(serverToken: string): Promise<void> {
+  const pendingUsers = localFallback.getUnsyncedCustomUsers();
+  if (pendingUsers.length === 0) return;
+
+  for (const u of pendingUsers) {
+    try {
+      const res = await fetch(`${API_BASE}/users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${serverToken}`
+        },
+        body: JSON.stringify({
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          department: u.department,
+          phone: u.phone,
+          password: u.password
+        })
+      });
+      if (res.ok || res.status === 409) {
+        localFallback.markCustomUserSynced(u.id);
+      }
+    } catch {
+      // ignore transient sync failure; will retry on next admin login
+    }
+  }
 }
 
 async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
@@ -79,12 +117,23 @@ export const api = {
       }
 
       if (!res.ok) {
+        // If user was previously created in localStorage while server was offline/fallback mode, allow logging in seamlessly
+        if (res.status === 401 && localFallback.findCustomUserForLogin(email, password)) {
+          const localAuth = localFallback.login(email, password);
+          setStoredToken(localAuth.token);
+          return localAuth;
+        }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Email atau kata sandi salah.');
       }
 
       const data: AuthResponse = await res.json();
       setStoredToken(data.token);
+
+      if (data.user.role === 'Administrator') {
+        await syncUnsyncedLocalUsers(data.token);
+      }
+
       return data;
     } catch (err: any) {
       // Network-level failure (no backend reachable) -> fallback to local storage auth
@@ -105,6 +154,8 @@ export const api = {
       } else if (token) {
         await authFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
       }
+    } catch {
+      // ignore logout network errors
     } finally {
       setStoredToken(null);
     }
@@ -113,6 +164,13 @@ export const api = {
   async getMe(): Promise<User> {
     const token = getStoredToken();
     if (shouldUseLocalMode()) {
+      // Prevent seeded accounts from staying trapped in browser local mode when real server backend is online
+      const isSeedSession =
+        token === 'local:user-admin' || token === 'local:user-operator' || token === 'local:user-viewer';
+      if (isSeedSession && (await isExpressBackendOnline())) {
+        setStoredToken(null);
+        throw new Error('Server backend aktif kembali. Silakan masuk ulang.');
+      }
       return localFallback.getMe(token);
     }
     const res = await authFetch(`${API_BASE}/auth/me`);
@@ -137,6 +195,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.changePassword(getStoredToken(), currentPassword, newPassword);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal memperbarui kata sandi');
@@ -166,6 +227,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ user_name, user_role })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.resetData(getStoredToken());
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to reset data');
@@ -179,6 +243,9 @@ export const api = {
       return localFallback.getRooms(getStoredToken());
     }
     const res = await authFetch(`${API_BASE}/rooms`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getRooms(getStoredToken());
+    }
     if (!res.ok) throw new Error('Gagal memuat data ruangan');
     return res.json();
   },
@@ -191,6 +258,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ...room, current_user: currentUser })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.createRoom(getStoredToken(), room);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menambahkan ruangan');
@@ -206,6 +276,9 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ ...room, current_user: currentUser })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.updateRoom(getStoredToken(), id, room);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal mengubah data ruangan');
@@ -224,6 +297,9 @@ export const api = {
     const res = await authFetch(url.toString(), {
       method: 'DELETE'
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.deleteRoom(getStoredToken(), id);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menghapus ruangan');
@@ -247,6 +323,9 @@ export const api = {
     }
 
     const res = await authFetch(url.toString());
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getEvents(getStoredToken(), filters);
+    }
     if (!res.ok) throw new Error('Gagal memuat data event');
     return res.json();
   },
@@ -266,6 +345,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(eventData)
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.checkConflict(getStoredToken(), eventData);
+    }
     if (!res.ok) throw new Error('Gagal memeriksa bentrok jadwal');
     return res.json();
   },
@@ -278,6 +360,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ...eventData, current_user: currentUser })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.createEvent(getStoredToken(), eventData);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menambahkan event');
@@ -293,6 +378,9 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ ...eventData, current_user: currentUser })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.updateEvent(getStoredToken(), id, eventData);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal memperbarui event');
@@ -311,6 +399,9 @@ export const api = {
     const res = await authFetch(url.toString(), {
       method: 'DELETE'
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.deleteEvent(getStoredToken(), id);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menghapus event');
@@ -324,6 +415,9 @@ export const api = {
       return localFallback.getUsers(getStoredToken());
     }
     const res = await authFetch(`${API_BASE}/users`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getUsers(getStoredToken());
+    }
     if (!res.ok) throw new Error('Gagal memuat pengguna');
     return res.json();
   },
@@ -336,6 +430,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ...user, current_user: currentUser })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.createUser(getStoredToken(), user);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menambahkan pengguna');
@@ -351,6 +448,9 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ ...user, current_user: currentUser })
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.updateUser(getStoredToken(), id, user);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal memperbarui pengguna');
@@ -369,6 +469,9 @@ export const api = {
     const res = await authFetch(url.toString(), {
       method: 'DELETE'
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.deleteUser(getStoredToken(), id);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menghapus pengguna');
@@ -382,6 +485,9 @@ export const api = {
       return localFallback.getAuditLogs(getStoredToken());
     }
     const res = await authFetch(`${API_BASE}/audit-logs`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getAuditLogs(getStoredToken());
+    }
     if (!res.ok) throw new Error('Gagal memuat riwayat audit');
     return res.json();
   },
@@ -405,6 +511,9 @@ export const api = {
       return localFallback.getSettings(getStoredToken());
     }
     const res = await authFetch(`${API_BASE}/settings`);
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.getSettings(getStoredToken());
+    }
     if (!res.ok) throw new Error('Gagal memuat pengaturan sistem');
     return res.json();
   },
@@ -417,6 +526,9 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(settings)
     });
+    if (isBackendUnavailableResponse(res)) {
+      return localFallback.updateSettings(getStoredToken(), settings);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal memperbarui pengaturan');

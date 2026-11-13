@@ -553,7 +553,7 @@
       "department": "Biro Administrasi Akademik & Sarpras",
       "phone": "081234567890",
       "created_at": "2026-01-01T08:00:00.000Z",
-      "password_hash": "ff2d82cc2f63a70fa1a28752ee6478cc:6c828329a772ad1f2791edddabf28c0827eecbecad65d447806741b055106e2c03fe6c32593af4906c9be3340c4a9fbf7a7ff3a1ae3c51a7a3cec5a8b67fa0b9"
+      "password_hash": "e3fbcdbd120a02f3b81ac8447c8d5963:f7e7b29af42973e620b9d85e583f93ee16e1e0365a463232bde00077291ecaa8236bb5a7614279ececb30d6b96cb3f1a0c12061994f943324faa4ae36d22fde8"
     },
     {
       "id": "user-operator",
@@ -563,7 +563,7 @@
       "department": "Bagian Rumah Tangga & Penjadwalan",
       "phone": "081398765432",
       "created_at": "2026-01-05T08:00:00.000Z",
-      "password_hash": "77a9ee54a38993f3f6545c22d0324830:922bc2069a92722d6637492aa698048983b93f93ee8e7422a69a6329221818781f6236cf9d9cdc1af1bd786c2d4f4423ea3a142ad288e4c9ae01370c7df8993e"
+      "password_hash": "9c0de37ea1adc05a945ac50d2e463298:92ce3ef22b6ca483aa2923a5c4242284679003667e5841f735619ab8add84fde95f5b89425a1c347baacdd6494cc41ea5a14c9ba9302e5ff12bb107a40895791"
     },
     {
       "id": "user-viewer",
@@ -573,7 +573,7 @@
       "department": "BEM Universitas STEKOM",
       "phone": "085712349988",
       "created_at": "2026-02-01T08:00:00.000Z",
-      "password_hash": "5b9db15819339f7842e87eca999dfcc9:09e422695888b613c21416c9607e02bc364a0db7201e6836590fd0bc5145c805c1750b2364c5d4865479c7aa98e4fa43a778999de1a996dded8d6fac534d64c5"
+      "password_hash": "0079f8f8e93bdbf51d9b13efe1f65d86:2d8d352f2dadd5a4ad1534ac098f48f2233a0b2d0ef0d08c0e3eb8e3441f7be10c1836e7c3ec0b79bb3e6ab69547f61ff1f31cd1db626af232484426aedc0c30"
     }
   ],
   "audit_logs": [
@@ -622,7 +622,7 @@
       "timestamp": "2026-11-06T09:00:00.000Z"
     },
     {
-      "id": "log-1794542105305",
+      "id": "log-1794542651648",
       "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
       "user_role": "Administrator",
       "action": "PENGATURAN",
@@ -630,7 +630,7 @@
       "target_id": "sys-reset",
       "target_name": "Database Reset",
       "details": "Melakukan reset data contoh awal Universitas STEKOM",
-      "timestamp": "2026-11-13T03:55:05.305Z"
+      "timestamp": "2026-11-13T04:04:11.648Z"
     }
   ],
   "system_settings": {
@@ -642,6 +642,6 @@
     "mode": "demo",
     "firebase_configured": false,
     "timezone": "Asia/Jakarta (WIB)",
-    "updated_at": "2026-11-13T03:55:05.305Z"
+    "updated_at": "2026-11-13T04:04:11.648Z"
   }
 }

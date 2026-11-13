@@ -15,6 +15,7 @@ import {
   Users,
   X
 } from 'lucide-react';
+import { api } from '../services/api';
 import { User, UserRole } from '../types';
 import { formatDateIndo } from '../utils/conflictDetector';
 
@@ -66,6 +67,15 @@ export const UsersView: React.FC<UsersViewProps> = ({
   // Delete Confirmation Modal
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
+  // Newly created account banner
+  const [lastCreatedAccount, setLastCreatedAccount] = useState<{
+    email: string;
+    password: string;
+    role: UserRole;
+  } | null>(null);
+
+  const isLocalMode = api.isLocalMode();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -84,15 +94,24 @@ export const UsersView: React.FC<UsersViewProps> = ({
       return;
     }
 
+    const finalEmail = email.trim().toLowerCase();
+    const finalPassword = hasPasswordInput ? password : 'stekom123';
+    const finalRole = role;
+
     try {
       setLoading(true);
       await onAddUser({
         name: name.trim(),
-        email: email.trim().toLowerCase(),
-        role,
+        email: finalEmail,
+        role: finalRole,
         department: department.trim(),
         phone: phone.trim(),
-        password: hasPasswordInput ? password : 'stekom123'
+        password: finalPassword
+      });
+      setLastCreatedAccount({
+        email: finalEmail,
+        password: finalPassword,
+        role: finalRole
       });
       setModalOpen(false);
       setName('');
@@ -239,8 +258,34 @@ export const UsersView: React.FC<UsersViewProps> = ({
             <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono font-bold text-stone-800">stekom123</code>.
             Pastikan memilih peran <strong>Operator</strong> atau <strong>Administrator</strong> jika akun tersebut akan digunakan untuk menambah dan menjadwalkan event.
           </p>
+          {isLocalMode && (
+            <p className="text-[11px] text-amber-800 font-semibold pt-0.5">
+              Catatan Mode Lokal Browser: Anda sedang mengakses preview statis tanpa server backend. Akun yang baru dibuat tersimpan di Browser Storage perangkat/browser ini saja (tidak otomatis terbaca di jendela Incognito atau browser lain).
+            </p>
+          )}
         </div>
       </div>
+
+      {/* Confirmation Banner for Newly Created User */}
+      {lastCreatedAccount && (
+        <div className="p-4 rounded-[22px] bg-emerald-50/90 border border-emerald-200 shadow-xs flex items-start justify-between gap-3 text-xs">
+          <div className="space-y-1 text-emerald-950">
+            <p className="font-bold">Akun Baru Siap Digunakan untuk Login:</p>
+            <p className="text-[11px]">
+              Email: <code className="px-1.5 py-0.5 rounded bg-white border border-emerald-200 font-mono font-bold">{lastCreatedAccount.email}</code>{' '}
+              • Sandi: <code className="px-1.5 py-0.5 rounded bg-white border border-emerald-200 font-mono font-bold">{lastCreatedAccount.password}</code>{' '}
+              • Peran: <strong>{lastCreatedAccount.role}</strong>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLastCreatedAccount(null)}
+            className="p-1 rounded-lg text-emerald-700 hover:bg-emerald-100"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* User Table */}
       <div className="bg-[#FCFBF8] rounded-[26px] border border-stone-200/90 shadow-xs overflow-hidden">
@@ -362,7 +407,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 py-4 text-xs">
+            <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4 py-4 text-xs">
               {formError && (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" strokeWidth={1.75} />
@@ -375,6 +420,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <input
                   type="text"
                   required
+                  autoComplete="off"
                   placeholder="Misal: Dr. Eko Prasetyo, M.Kom"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -387,6 +433,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <input
                   type="email"
                   required
+                  autoComplete="off"
                   placeholder="nama@stekom.ac.id"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -401,6 +448,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
                     placeholder="Kosongkan untuk pakai default: stekom123"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -618,6 +666,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                     type={showNewPassword ? 'text' : 'password'}
                     required
                     minLength={6}
+                    autoComplete="new-password"
                     placeholder="Masukkan kata sandi baru"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}

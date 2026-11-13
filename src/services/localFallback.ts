@@ -14,6 +14,17 @@ const LOCAL_TOKEN_PREFIX = 'local:';
 
 interface LocalUserRecord extends User {
   password: string;
+  syncedToServer?: boolean;
+}
+
+const SEED_USER_IDS = new Set(['user-admin', 'user-operator', 'user-viewer']);
+
+function getDefaultPasswordForEmail(email: string): string {
+  const normalized = (email || '').trim().toLowerCase();
+  if (normalized === 'admin@stekom.ac.id') return 'admin123';
+  if (normalized === 'operator@stekom.ac.id') return 'operator123';
+  if (normalized === 'viewer@stekom.ac.id') return 'viewer123';
+  return 'stekom123';
 }
 
 interface LocalDatabase {
@@ -558,6 +569,17 @@ function loadLocalDb(): LocalDatabase {
           parsed.users = JSON.parse(JSON.stringify(INITIAL_USERS));
           migrated = true;
         }
+        for (const u of parsed.users) {
+          const cleanEmail = String(u.email || '').trim().toLowerCase();
+          if (u.email !== cleanEmail) {
+            u.email = cleanEmail;
+            migrated = true;
+          }
+          if (!u.password) {
+            u.password = getDefaultPasswordForEmail(cleanEmail);
+            migrated = true;
+          }
+        }
         for (const ev of parsed.events) {
           if ((ev.status as string) === 'Dikonfirmasi') {
             ev.status = 'Scheduled';
@@ -607,6 +629,29 @@ function requireLocalAuth(token: string | null): LocalUserRecord {
 export const localFallback = {
   isLocalToken(token: string | null): boolean {
     return Boolean(token && token.startsWith(LOCAL_TOKEN_PREFIX));
+  },
+
+  findCustomUserForLogin(email: string, password: string): boolean {
+    const db = loadLocalDb();
+    const normalized = email.trim().toLowerCase();
+    const user = db.users.find(
+      (u) => !SEED_USER_IDS.has(u.id) && !u.syncedToServer && u.email.trim().toLowerCase() === normalized
+    );
+    return Boolean(user && user.password === password);
+  },
+
+  getUnsyncedCustomUsers(): LocalUserRecord[] {
+    const db = loadLocalDb();
+    return db.users.filter((u) => !SEED_USER_IDS.has(u.id) && !u.syncedToServer);
+  },
+
+  markCustomUserSynced(id: string) {
+    const db = loadLocalDb();
+    const idx = db.users.findIndex((u) => u.id === id);
+    if (idx !== -1) {
+      db.users[idx].syncedToServer = true;
+      saveLocalDb(db);
+    }
   },
 
   login(email: string, password: string): AuthResponse {
