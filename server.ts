@@ -1,4 +1,5 @@
-import express, { Request, Response } from 'express';
+import crypto from 'crypto';
+import express, { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -6,6 +7,9 @@ import { createServer as createViteServer } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const AUTH_SECRET = process.env.AUTH_SECRET || 'stekom-campus-event-mgmt-secret-2026';
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const isProd = process.env.NODE_ENV === 'production';
 const PORT = 3000;
@@ -512,12 +516,35 @@ const INITIAL_AUDIT_LOGS = [
   }
 ];
 
+interface DbUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'Administrator' | 'Operator' | 'Viewer';
+  department: string;
+  phone?: string;
+  created_at: string;
+  password_hash?: string;
+}
+
+interface DbAuditLog {
+  id: string;
+  user_name: string;
+  user_role: string;
+  action: string;
+  target_type: string;
+  target_id?: string;
+  target_name: string;
+  details: string;
+  timestamp: string;
+}
+
 // Helper to read and write database
 interface DatabaseSchema {
   rooms: typeof INITIAL_ROOMS;
   events: typeof INITIAL_EVENTS;
-  users: typeof INITIAL_USERS;
-  audit_logs: typeof INITIAL_AUDIT_LOGS;
+  users: DbUser[];
+  audit_logs: DbAuditLog[];
   system_settings: {
     app_name: string;
     campus_name: string;
@@ -528,6 +555,124 @@ interface DatabaseSchema {
     firebase_configured: boolean;
     timezone: string;
     updated_at: string;
+  };
+}
+
+function getDefaultPasswordForEmail(email: string): string {
+  const normalized = (email || '').trim().toLowerCase();
+  if (normalized === 'admin@stekom.ac.id') return 'admin123';
+  if (normalized === 'operator@stekom.ac.id') return 'operator123';
+  if (normalized === 'viewer@stekom.ac.id') return 'viewer123';
+  return 'stekom123';
+}
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, storedHash?: string): boolean {
+  if (!storedHash || !storedHash.includes(':')) return false;
+  const [salt, originalHex] = storedHash.split(':');
+  if (!salt || !originalHex) return false;
+  try {
+    const derived = crypto.scryptSync(password, salt, 64);
+    const originalBuf = Buffer.from(originalHex, 'hex');
+    if (derived.length !== originalBuf.length) return false;
+    return crypto.timingSafeEqual(derived, originalBuf);
+  } catch {
+    return false;
+  }
+}
+
+function createSeedUsers(): DbUser[] {
+  return INITIAL_USERS.map((u) => ({
+    ...u,
+    role: u.role as DbUser['role'],
+    password_hash: hashPassword(getDefaultPasswordForEmail(u.email))
+  }));
+}
+
+function sanitizeUser(user: DbUser) {
+  const { password_hash: _ignored, ...safe } = user;
+  return safe;
+}
+
+interface AuthTokenPayload {
+  sub: string;
+  role: DbUser['role'];
+  email: string;
+  exp: number;
+}
+
+function createAuthToken(user: DbUser): string {
+  const payload: AuthTokenPayload = {
+    sub: user.id,
+    role: user.role,
+    email: user.email,
+    exp: Date.now() + TOKEN_TTL_MS
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', AUTH_SECRET).update(encodedPayload).digest('base64url');
+  return `${encodedPayload}.${signature}`;
+}
+
+function verifyAuthToken(token: string): AuthTokenPayload | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [encodedPayload, signature] = parts;
+    const expectedSig = crypto.createHmac('sha256', AUTH_SECRET).update(encodedPayload).digest('base64url');
+    const sigBuf = Buffer.from(signature);
+    const expectedBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return null;
+    }
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf-8')) as AuthTokenPayload;
+    if (!payload.sub || !payload.exp || payload.exp < Date.now()) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+interface AuthenticatedRequest extends Request {
+  authUser?: DbUser;
+}
+
+function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Autentikasi diperlukan. Silakan login terlebih dahulu.' });
+  }
+  const token = authHeader.slice(7).trim();
+  const payload = verifyAuthToken(token);
+  if (!payload) {
+    return res.status(401).json({ error: 'Sesi login tidak valid atau telah berakhir. Silakan login kembali.' });
+  }
+  const db = getDatabase();
+  const user = db.users.find((u) => u.id === payload.sub);
+  if (!user) {
+    return res.status(401).json({ error: 'Akun pengguna tidak ditemukan atau telah dihapus.' });
+  }
+  req.authUser = user;
+  next();
+}
+
+function requireRoles(...allowedRoles: Array<DbUser['role']>) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!req.authUser) {
+      return res.status(401).json({ error: 'Autentikasi diperlukan.' });
+    }
+    if (!allowedRoles.includes(req.authUser.role)) {
+      return res.status(403).json({
+        error: `Akses ditolak. Peran "${req.authUser.role}" tidak memiliki izin untuk tindakan ini.`
+      });
+    }
+    next();
   };
 }
 
@@ -544,6 +689,17 @@ function getDatabase(): DatabaseSchema {
           }
         }
       }
+      if (Array.isArray(data.users)) {
+        for (const u of data.users) {
+          if (!u.password_hash) {
+            u.password_hash = hashPassword(getDefaultPasswordForEmail(u.email));
+            migrated = true;
+          }
+        }
+      } else {
+        data.users = createSeedUsers();
+        migrated = true;
+      }
       if (migrated) {
         saveDatabase(data);
       }
@@ -557,7 +713,7 @@ function getDatabase(): DatabaseSchema {
   const initialDb: DatabaseSchema = {
     rooms: INITIAL_ROOMS,
     events: INITIAL_EVENTS,
-    users: INITIAL_USERS,
+    users: createSeedUsers(),
     audit_logs: INITIAL_AUDIT_LOGS,
     system_settings: {
       app_name: 'STEKOM CAMPUS EVENT MANAGEMENT',
@@ -701,18 +857,118 @@ async function startServer() {
     });
   });
 
-  // Reset database to initial sample data
-  app.post('/api/reset-data', (req: Request, res: Response) => {
+  // Authentication Endpoints
+  app.post('/api/auth/login', (req: Request, res: Response) => {
+    const db = getDatabase();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email dan kata sandi wajib diisi.' });
+    }
+
+    const user = db.users.find((u) => u.email.trim().toLowerCase() === email);
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ error: 'Email atau kata sandi salah. Silakan periksa kembali.' });
+    }
+
+    const token = createAuthToken(user);
+
+    db.audit_logs.unshift({
+      id: `log-${Date.now()}`,
+      user_name: user.name,
+      user_role: user.role,
+      action: 'LOGIN',
+      target_type: 'Sistem',
+      target_id: user.id,
+      target_name: 'Autentikasi Pengguna',
+      details: `${user.name} (${user.email}) masuk ke sistem sebagai ${user.role}`,
+      timestamp: new Date().toISOString()
+    });
+    saveDatabase(db);
+
+    res.json({
+      token,
+      user: sanitizeUser(user)
+    });
+  });
+
+  app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const db = getDatabase();
+    const user = req.authUser!;
+
+    db.audit_logs.unshift({
+      id: `log-${Date.now()}`,
+      user_name: user.name,
+      user_role: user.role,
+      action: 'LOGOUT',
+      target_type: 'Sistem',
+      target_id: user.id,
+      target_name: 'Autentikasi Pengguna',
+      details: `${user.name} (${user.email}) keluar (logout) dari sistem`,
+      timestamp: new Date().toISOString()
+    });
+    saveDatabase(db);
+
+    res.json({ success: true });
+  });
+
+  app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    res.json(sanitizeUser(req.authUser!));
+  });
+
+  app.post('/api/auth/change-password', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const db = getDatabase();
+    const authUser = req.authUser!;
+    const currentPassword = String(req.body?.currentPassword || '');
+    const newPassword = String(req.body?.newPassword || '');
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Kata sandi saat ini dan kata sandi baru wajib diisi.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Kata sandi baru minimal harus 6 karakter.' });
+    }
+
+    const index = db.users.findIndex((u) => u.id === authUser.id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Akun pengguna tidak ditemukan.' });
+    }
+
+    if (!verifyPassword(currentPassword, db.users[index].password_hash)) {
+      return res.status(400).json({ error: 'Kata sandi saat ini tidak sesuai.' });
+    }
+
+    db.users[index].password_hash = hashPassword(newPassword);
+    db.audit_logs.unshift({
+      id: `log-${Date.now()}`,
+      user_name: authUser.name,
+      user_role: authUser.role,
+      action: 'UBAH',
+      target_type: 'Pengguna',
+      target_id: authUser.id,
+      target_name: authUser.name,
+      details: `${authUser.name} memperbarui kata sandi akun pribadinya`,
+      timestamp: new Date().toISOString()
+    });
+    saveDatabase(db);
+
+    res.json({ success: true, message: 'Kata sandi berhasil diperbarui.' });
+  });
+
+  // Reset database to initial sample data (Administrator only)
+  app.post('/api/reset-data', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.authUser!;
     const freshDb: DatabaseSchema = {
       rooms: INITIAL_ROOMS,
       events: INITIAL_EVENTS,
-      users: INITIAL_USERS,
+      users: createSeedUsers(),
       audit_logs: [
         ...INITIAL_AUDIT_LOGS,
         {
           id: `log-${Date.now()}`,
-          user_name: req.body.user_name || 'Administrator',
-          user_role: req.body.user_role || 'Administrator',
+          user_name: actor.name,
+          user_role: actor.role,
           action: 'PENGATURAN',
           target_type: 'Sistem',
           target_id: 'sys-reset',
@@ -738,13 +994,14 @@ async function startServer() {
   });
 
   // Rooms CRUD
-  app.get('/api/rooms', (req: Request, res: Response) => {
+  app.get('/api/rooms', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     res.json(db.rooms);
   });
 
-  app.post('/api/rooms', (req: Request, res: Response) => {
+  app.post('/api/rooms', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const newRoom = {
       id: req.body.id || `room-${Date.now()}`,
       name: req.body.name,
@@ -763,8 +1020,8 @@ async function startServer() {
     // Audit log
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: req.body.current_user?.name || 'Administrator',
-      user_role: req.body.current_user?.role || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'TAMBAH',
       target_type: 'Ruangan',
       target_id: newRoom.id,
@@ -777,17 +1034,19 @@ async function startServer() {
     res.status(201).json(newRoom);
   });
 
-  app.put('/api/rooms/:id', (req: Request, res: Response) => {
+  app.put('/api/rooms/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const index = db.rooms.findIndex((r) => r.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Ruangan tidak ditemukan' });
     }
 
     const prevRoom = db.rooms[index];
+    const { current_user: _ignoredUser, ...roomFields } = req.body;
     const updatedRoom = {
       ...prevRoom,
-      ...req.body,
+      ...roomFields,
       capacity: req.body.capacity !== undefined ? Number(req.body.capacity) : prevRoom.capacity
     };
     db.rooms[index] = updatedRoom;
@@ -795,8 +1054,8 @@ async function startServer() {
     // Audit log
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: req.body.current_user?.name || 'Administrator',
-      user_role: req.body.current_user?.role || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'UBAH',
       target_type: 'Ruangan',
       target_id: updatedRoom.id,
@@ -809,8 +1068,9 @@ async function startServer() {
     res.json(updatedRoom);
   });
 
-  app.delete('/api/rooms/:id', (req: Request, res: Response) => {
+  app.delete('/api/rooms/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const index = db.rooms.findIndex((r) => r.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Ruangan tidak ditemukan' });
@@ -832,8 +1092,8 @@ async function startServer() {
     // Audit log
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: (req.query.user_name as string) || 'Administrator',
-      user_role: ((req.query.user_role as string) as any) || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'HAPUS',
       target_type: 'Ruangan',
       target_id: deleted.id,
@@ -847,7 +1107,7 @@ async function startServer() {
   });
 
   // Events CRUD & Conflict Check
-  app.get('/api/events', (req: Request, res: Response) => {
+  app.get('/api/events', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     let events = [...db.events];
 
@@ -898,7 +1158,7 @@ async function startServer() {
   });
 
   // Conflict checking endpoint
-  app.post('/api/events/check-conflict', (req: Request, res: Response) => {
+  app.post('/api/events/check-conflict', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     const { id, tanggal, jam_mulai, jam_selesai, ruangan_ids, status } = req.body;
 
@@ -915,8 +1175,9 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/events', (req: Request, res: Response) => {
+  app.post('/api/events', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const {
       nama_event,
       tanggal,
@@ -927,8 +1188,7 @@ async function startServer() {
       nomor_hp_pic,
       ruangan_ids,
       status,
-      catatan,
-      current_user
+      catatan
     } = req.body;
 
     // Strict Validations
@@ -979,7 +1239,7 @@ async function startServer() {
       catatan: catatan ? catatan.trim() : '',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      created_by: current_user?.name || 'Administrator'
+      created_by: actor.name
     };
 
     db.events.push(newEvent);
@@ -987,8 +1247,8 @@ async function startServer() {
     // Audit log
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: current_user?.name || 'Administrator',
-      user_role: current_user?.role || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'TAMBAH',
       target_type: 'Event',
       target_id: newEvent.id,
@@ -1001,8 +1261,9 @@ async function startServer() {
     res.status(201).json(newEvent);
   });
 
-  app.put('/api/events/:id', (req: Request, res: Response) => {
+  app.put('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const index = db.events.findIndex((e) => e.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Event tidak ditemukan' });
@@ -1019,8 +1280,7 @@ async function startServer() {
       nomor_hp_pic,
       ruangan_ids,
       status,
-      catatan,
-      current_user
+      catatan
     } = req.body;
 
     const updatedTanggal = tanggal || existingEvent.tanggal;
@@ -1096,8 +1356,8 @@ async function startServer() {
 
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: current_user?.name || 'Administrator',
-      user_role: current_user?.role || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: auditAction,
       target_type: 'Event',
       target_id: updatedEvent.id,
@@ -1110,8 +1370,9 @@ async function startServer() {
     res.json(updatedEvent);
   });
 
-  app.delete('/api/events/:id', (req: Request, res: Response) => {
+  app.delete('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const index = db.events.findIndex((e) => e.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Event tidak ditemukan' });
@@ -1121,8 +1382,8 @@ async function startServer() {
 
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: (req.query.user_name as string) || 'Administrator',
-      user_role: ((req.query.user_role as string) as any) || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'HAPUS',
       target_type: 'Event',
       target_id: deleted.id,
@@ -1135,30 +1396,49 @@ async function startServer() {
     res.json({ success: true, deletedEvent: deleted });
   });
 
-  // Users CRUD
-  app.get('/api/users', (req: Request, res: Response) => {
+  // Users CRUD (Administrator only)
+  app.get('/api/users', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
-    res.json(db.users);
+    res.json(db.users.map(sanitizeUser));
   });
 
-  app.post('/api/users', (req: Request, res: Response) => {
+  app.post('/api/users', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
-    const newUser = {
+    const actor = req.authUser!;
+    const name = String(req.body?.name || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const rawPassword = String(req.body?.password || '').trim();
+    const password = rawPassword || 'stekom123';
+
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Nama dan email pengguna wajib diisi.' });
+    }
+
+    if (rawPassword && rawPassword.length < 6) {
+      return res.status(400).json({ error: 'Kata sandi minimal 6 karakter.' });
+    }
+
+    if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
+      return res.status(409).json({ error: `Email "${email}" sudah terdaftar dalam sistem.` });
+    }
+
+    const newUser: DbUser = {
       id: `user-${Date.now()}`,
-      name: req.body.name,
-      email: req.body.email,
+      name,
+      email,
       role: req.body.role || 'Operator',
-      department: req.body.department || 'Universitas STEKOM',
-      phone: req.body.phone || '',
-      created_at: new Date().toISOString()
+      department: String(req.body.department || 'Universitas STEKOM').trim(),
+      phone: String(req.body.phone || '').trim(),
+      created_at: new Date().toISOString(),
+      password_hash: hashPassword(password)
     };
 
     db.users.push(newUser);
 
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: req.body.current_user?.name || 'Administrator',
-      user_role: req.body.current_user?.role || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'TAMBAH',
       target_type: 'Pengguna',
       target_id: newUser.id,
@@ -1168,41 +1448,80 @@ async function startServer() {
     });
 
     saveDatabase(db);
-    res.status(201).json(newUser);
+    res.status(201).json(sanitizeUser(newUser));
   });
 
-  app.put('/api/users/:id', (req: Request, res: Response) => {
+  app.put('/api/users/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
     const index = db.users.findIndex((u) => u.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
 
     const prevUser = db.users[index];
-    const updated = {
+    const {
+      name,
+      email,
+      role,
+      department,
+      phone,
+      new_password
+    } = req.body;
+
+    if (email !== undefined) {
+      const normalizedEmail = String(email).trim().toLowerCase();
+      if (db.users.some((u) => u.id !== prevUser.id && u.email.trim().toLowerCase() === normalizedEmail)) {
+        return res.status(409).json({ error: `Email "${normalizedEmail}" sudah digunakan pengguna lain.` });
+      }
+    }
+
+    let updatedHash = prevUser.password_hash;
+    let passwordChanged = false;
+    if (new_password !== undefined && String(new_password).trim() !== '') {
+      const pw = String(new_password).trim();
+      if (pw.length < 6) {
+        return res.status(400).json({ error: 'Kata sandi baru minimal 6 karakter.' });
+      }
+      updatedHash = hashPassword(pw);
+      passwordChanged = true;
+    }
+
+    const updated: DbUser = {
       ...prevUser,
-      ...req.body
+      name: name !== undefined ? String(name).trim() : prevUser.name,
+      email: email !== undefined ? String(email).trim().toLowerCase() : prevUser.email,
+      role: role !== undefined ? role : prevUser.role,
+      department: department !== undefined ? String(department).trim() : prevUser.department,
+      phone: phone !== undefined ? String(phone).trim() : prevUser.phone,
+      password_hash: updatedHash
     };
     db.users[index] = updated;
 
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: req.body.current_user?.name || 'Administrator',
-      user_role: req.body.current_user?.role || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'UBAH',
       target_type: 'Pengguna',
       target_id: updated.id,
       target_name: updated.name,
-      details: `Mengubah data pengguna ${updated.name} (Peran: ${updated.role})`,
+      details: passwordChanged
+        ? `Mengubah data / mereset kata sandi pengguna ${updated.name} (Peran: ${updated.role})`
+        : `Mengubah data pengguna ${updated.name} (Peran: ${updated.role})`,
       timestamp: new Date().toISOString()
     });
 
     saveDatabase(db);
-    res.json(updated);
+    res.json(sanitizeUser(updated));
   });
 
-  app.delete('/api/users/:id', (req: Request, res: Response) => {
+  app.delete('/api/users/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
+    const actor = req.authUser!;
+    if (req.params.id === actor.id) {
+      return res.status(400).json({ error: 'Anda tidak dapat menghapus akun Anda sendiri yang sedang aktif.' });
+    }
     const index = db.users.findIndex((u) => u.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
@@ -1212,8 +1531,8 @@ async function startServer() {
 
     db.audit_logs.unshift({
       id: `log-${Date.now()}`,
-      user_name: (req.query.user_name as string) || 'Administrator',
-      user_role: ((req.query.user_role as string) as any) || 'Administrator',
+      user_name: actor.name,
+      user_role: actor.role,
       action: 'HAPUS',
       target_type: 'Pengguna',
       target_id: deleted.id,
@@ -1223,22 +1542,22 @@ async function startServer() {
     });
 
     saveDatabase(db);
-    res.json({ success: true, deletedUser: deleted });
+    res.json({ success: true, deletedUser: sanitizeUser(deleted) });
   });
 
-  // Audit Logs
-  app.get('/api/audit-logs', (req: Request, res: Response) => {
+  // Audit Logs (Administrator & Operator)
+  app.get('/api/audit-logs', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     res.json(db.audit_logs);
   });
 
   // System Settings
-  app.get('/api/settings', (req: Request, res: Response) => {
+  app.get('/api/settings', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     res.json(db.system_settings);
   });
 
-  app.put('/api/settings', (req: Request, res: Response) => {
+  app.put('/api/settings', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     db.system_settings = {
       ...db.system_settings,
@@ -1250,7 +1569,7 @@ async function startServer() {
   });
 
   // Stats calculation
-  app.get('/api/stats', (req: Request, res: Response) => {
+  app.get('/api/stats', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const db = getDatabase();
     const events = db.events;
     const rooms = db.rooms;

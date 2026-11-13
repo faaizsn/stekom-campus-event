@@ -1,28 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   AlertTriangle,
-  Bell,
   CheckCircle2,
-  Clock,
-  Database,
-  HelpCircle,
-  Info,
-  Shield,
   X
 } from 'lucide-react';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { EventDetailModal } from './components/EventDetailModal';
 import { EventFormModal } from './components/EventFormModal';
+import { LoginView } from './components/LoginView';
 import { MonthlyRecapModal } from './components/MonthlyRecapModal';
 import { Navbar } from './components/Navbar';
 import { ActiveTab, Sidebar } from './components/Sidebar';
-import { api } from './services/api';
+import { api, getStoredToken } from './services/api';
 import {
   AuditLog,
   CampusEvent,
   FilterOptions,
   Room,
-  User,
-  UserRole
+  User
 } from './types';
 import { checkEventConflict } from './utils/conflictDetector';
 import { AuditLogsView } from './views/AuditLogsView';
@@ -44,10 +39,14 @@ const DEFAULT_FILTERS: FilterOptions = {
 };
 
 export default function App() {
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
   // Navigation & UI State
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
 
   // Data State
@@ -56,17 +55,6 @@ export default function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
-  // Active User & Role
-  const [currentUser, setCurrentUser] = useState<User>({
-    id: 'user-admin',
-    name: 'Dr. Ir. Agus Wibowo, M.Kom',
-    email: 'admin@stekom.ac.id',
-    role: 'Administrator',
-    department: 'Biro Administrasi Akademik & Sarpras',
-    phone: '081234567890',
-    created_at: '2026-01-01T08:00:00.000Z'
-  });
-
   // Filter State (Consistent across Views)
   const [filters, setFilters] = useState<FilterOptions>(DEFAULT_FILTERS);
 
@@ -74,6 +62,7 @@ export default function App() {
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [monthlyRecapOpen, setMonthlyRecapOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [recapMonth, setRecapMonth] = useState('11');
   const [recapYear, setRecapYear] = useState('2026');
   const [selectedEvent, setSelectedEvent] = useState<CampusEvent | null>(null);
@@ -94,57 +83,97 @@ export default function App() {
     }, 4500);
   }, []);
 
-  // Fetch initial data from server
-  const loadInitialData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [roomsData, eventsData, usersData, logsData] = await Promise.all([
-        api.getRooms().catch(() => []),
-        api.getEvents().catch(() => []),
-        api.getUsers().catch(() => []),
-        api.getAuditLogs().catch(() => [])
-      ]);
+  // Fetch initial data from server (respecting role access)
+  const loadInitialData = useCallback(
+    async (user: User) => {
+      try {
+        setLoading(true);
+        const [roomsData, eventsData, usersData, logsData] = await Promise.all([
+          api.getRooms().catch(() => []),
+          api.getEvents().catch(() => []),
+          user.role === 'Administrator' ? api.getUsers().catch(() => []) : Promise.resolve([]),
+          user.role === 'Administrator' || user.role === 'Operator'
+            ? api.getAuditLogs().catch(() => [])
+            : Promise.resolve([])
+        ]);
 
-      setRooms(roomsData);
-      setEvents(eventsData);
-      setUsers(usersData);
-      setAuditLogs(logsData);
-    } catch (err: any) {
-      console.error('Failed to load data:', err);
-      showToast('error', 'Gagal memuat data dari server. Periksa koneksi backend.');
-    } finally {
-      setLoading(false);
-    }
-  }, [showToast]);
+        setRooms(roomsData);
+        setEvents(eventsData);
+        setUsers(usersData);
+        setAuditLogs(logsData);
+      } catch (err: any) {
+        console.error('Failed to load data:', err);
+        showToast('error', 'Gagal memuat data dari server. Periksa koneksi backend.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [showToast]
+  );
 
+  // Check existing login session on mount
   useEffect(() => {
-    loadInitialData();
+    let active = true;
+    const restoreSession = async () => {
+      const token = getStoredToken();
+      if (!token) {
+        if (active) setAuthChecking(false);
+        return;
+      }
+
+      try {
+        const user = await api.getMe();
+        if (active) {
+          setCurrentUser(user);
+          await loadInitialData(user);
+        }
+      } catch {
+        // Token expired/invalid; fallback to Login screen
+      } finally {
+        if (active) setAuthChecking(false);
+      }
+    };
+
+    restoreSession();
+    return () => {
+      active = false;
+    };
   }, [loadInitialData]);
 
-  // Role Switcher for instant demonstration
-  const handleSwitchRole = (newRole: UserRole) => {
-    const matched = users.find((u) => u.role === newRole);
-    if (matched) {
-      setCurrentUser(matched);
-    } else {
-      setCurrentUser((prev) => ({
-        ...prev,
-        role: newRole,
-        name:
-          newRole === 'Administrator'
-            ? 'Dr. Ir. Agus Wibowo, M.Kom'
-            : newRole === 'Operator'
-            ? 'Rahmat Hidayat, S.Kom'
-            : 'Siti Nurhaliza (Mahasiswa / BEM)'
-      }));
+  // Enforce RBAC tab guard
+  useEffect(() => {
+    if (!currentUser) return;
+    if ((activeTab === 'users' || activeTab === 'settings') && currentUser.role !== 'Administrator') {
+      setActiveTab('dashboard');
+    } else if (activeTab === 'audit-logs' && currentUser.role === 'Viewer') {
+      setActiveTab('dashboard');
     }
-    showToast('success', `Peran aktif dialihkan ke: ${newRole}`);
+  }, [activeTab, currentUser]);
+
+  const handleLoginSuccess = async (user: User) => {
+    setCurrentUser(user);
+    setActiveTab('dashboard');
+    await loadInitialData(user);
+    showToast('success', `Selamat datang, ${user.name} (${user.role})`);
+  };
+
+  const handleLogout = async () => {
+    await api.logout();
+    setCurrentUser(null);
+    setRooms([]);
+    setEvents([]);
+    setUsers([]);
+    setAuditLogs([]);
+    setActiveTab('dashboard');
+    setMobileMenuOpen(false);
+    setChangePasswordOpen(false);
+    showToast('success', 'Anda telah keluar (logout) dari sistem.');
   };
 
   // Reset Filters
   const handleResetFilters = () => {
     setFilters(DEFAULT_FILTERS);
-    showToast('info' as any, 'Semua filter pencarian telah di-reset');
+    showToast('success', 'Semua filter pencarian telah di-reset');
   };
 
   // Open Form Modal for New Event
@@ -163,20 +192,18 @@ export default function App() {
 
   // Save Event (Create or Update)
   const handleSaveEvent = async (eventData: Partial<CampusEvent>) => {
+    if (!currentUser) return;
     try {
       if (eventData.id) {
-        // Update
         const updated = await api.updateEvent(eventData.id, eventData, currentUser);
         setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
         showToast('success', `Jadwal event "${updated.nama_event}" berhasil diperbarui.`);
       } else {
-        // Create
         const created = await api.createEvent(eventData, currentUser);
         setEvents((prev) => [created, ...prev]);
         showToast('success', `Event baru "${created.nama_event}" berhasil diajukan & dijadwalkan.`);
       }
 
-      // Refresh audit logs
       const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
       setAuditLogs(refreshedLogs);
     } catch (err: any) {
@@ -187,13 +214,13 @@ export default function App() {
 
   // Delete Event
   const handleDeleteEvent = async (id: string) => {
+    if (!currentUser) return;
     try {
       const target = events.find((e) => e.id === id);
       await api.deleteEvent(id, currentUser.name, currentUser.role);
       setEvents((prev) => prev.filter((e) => e.id !== id));
       showToast('success', `Event "${target?.nama_event || id}" berhasil dihapus.`);
 
-      // Refresh audit logs
       const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
       setAuditLogs(refreshedLogs);
     } catch (err: any) {
@@ -206,10 +233,10 @@ export default function App() {
     id: string,
     newStatus: 'Scheduled' | 'Dibatalkan' | 'Menunggu Konfirmasi'
   ) => {
+    if (!currentUser) return;
     const target = events.find((e) => e.id === id);
     if (!target) return;
 
-    // Rule: "Deteksi bentrok berdasarkan ruangan, tanggal, dan irisan jam; event dibatalkan tidak memblokir ruangan. Tampilkan peringatan bentrok dan jangan izinkan konfirmasi jadwal yang bentrok."
     if (newStatus === 'Scheduled') {
       const conflictCheck = checkEventConflict(
         {
@@ -247,6 +274,7 @@ export default function App() {
 
   // Room Management Actions
   const handleUpdateRoom = async (id: string, updated: Partial<Room>) => {
+    if (!currentUser) return;
     try {
       const result = await api.updateRoom(id, updated, currentUser);
       setRooms((prev) => prev.map((r) => (r.id === result.id ? result : r)));
@@ -261,6 +289,7 @@ export default function App() {
   };
 
   const handleCreateRoom = async (newRoom: Partial<Room>) => {
+    if (!currentUser) return;
     try {
       const result = await api.createRoom(newRoom, currentUser);
       setRooms((prev) => [...prev, result]);
@@ -275,7 +304,8 @@ export default function App() {
   };
 
   // User Management Actions
-  const handleAddUser = async (newUserData: Partial<User>) => {
+  const handleAddUser = async (newUserData: Partial<User> & { password?: string }) => {
+    if (!currentUser) return;
     try {
       const user = await api.createUser(newUserData, currentUser);
       setUsers((prev) => [...prev, user]);
@@ -289,7 +319,23 @@ export default function App() {
     }
   };
 
+  const handleResetUserPassword = async (userId: string, newPassword: string) => {
+    if (!currentUser) return;
+    try {
+      const updated = await api.updateUser(userId, { new_password: newPassword }, currentUser);
+      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      showToast('success', `Kata sandi untuk "${updated.name}" berhasil direset.`);
+
+      const refreshedLogs = await api.getAuditLogs().catch(() => auditLogs);
+      setAuditLogs(refreshedLogs);
+    } catch (err: any) {
+      showToast('error', err.message || 'Gagal mereset kata sandi pengguna');
+      throw err;
+    }
+  };
+
   const handleDeleteUser = async (id: string) => {
+    if (!currentUser) return;
     try {
       await api.deleteUser(id, currentUser.name, currentUser.role);
       setUsers((prev) => prev.filter((u) => u.id !== id));
@@ -304,9 +350,10 @@ export default function App() {
 
   // Reset Demo Data
   const handleResetData = async () => {
+    if (!currentUser) return;
     try {
       await api.resetData(currentUser.name, currentUser.role);
-      await loadInitialData();
+      await loadInitialData(currentUser);
       showToast('success', 'Data contoh Universitas STEKOM berhasil dipulihkan.');
     } catch (err: any) {
       showToast('error', err.message || 'Gagal me-reset data');
@@ -314,14 +361,51 @@ export default function App() {
     }
   };
 
+  // Checking existing token
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-[#f6f4ef] flex flex-col items-center justify-center space-y-3">
+        <div className="w-10 h-10 border-4 border-blue-700 border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs font-semibold text-stone-600">
+          Memeriksa sesi login STEKOM Campus Event...
+        </p>
+      </div>
+    );
+  }
+
+  // Unauthenticated -> Show Login Screen
+  if (!currentUser) {
+    return (
+      <>
+        <LoginView onLoginSuccess={handleLoginSuccess} />
+        {toast && (
+          <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border border-stone-200 text-xs font-semibold bg-[#FCFBF8]">
+            {toast.type === 'success' && (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" strokeWidth={1.75} />
+            )}
+            {toast.type === 'error' && (
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" strokeWidth={1.75} />
+            )}
+            <span className="text-stone-800 leading-tight max-w-sm">{toast.message}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="text-stone-400 hover:text-stone-600 ml-2"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </>
+    );
+  }
+
   const pendingEventsCount = events.filter((e) => e.status === 'Menunggu Konfirmasi').length;
 
   return (
-    <div className="min-h-screen bg-slate-100/70 text-slate-800 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-[#f6f4ef] text-stone-800 flex flex-col font-sans antialiased selection:bg-blue-700 selection:text-white">
       {/* Top Navigation */}
       <Navbar
         currentUser={currentUser}
-        onSwitchRole={handleSwitchRole}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
         serverStatus={{
@@ -330,6 +414,8 @@ export default function App() {
           mode: 'demo'
         }}
         onOpenSettings={() => setActiveTab('settings')}
+        onOpenChangePassword={() => setChangePasswordOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main Layout Area */}
@@ -347,14 +433,16 @@ export default function App() {
             totalRooms: rooms.length
           }}
           onOpenMonthlyRecap={() => handleOpenMonthlyRecap()}
+          onOpenChangePassword={() => setChangePasswordOpen(true)}
+          onLogout={handleLogout}
         />
 
         {/* Content View Container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0 overflow-y-auto">
           {loading ? (
             <div className="py-24 flex flex-col items-center justify-center space-y-3">
-              <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              <p className="text-xs font-semibold text-slate-500">
+              <div className="w-10 h-10 border-4 border-blue-700 border-t-transparent rounded-full animate-spin" />
+              <p className="text-xs font-semibold text-stone-500">
                 Memuat data event dan 21 ruangan STEKOM...
               </p>
             </div>
@@ -437,20 +525,21 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'users' && (
+              {activeTab === 'users' && currentUser.role === 'Administrator' && (
                 <UsersView
                   users={users}
                   currentUser={currentUser}
                   onAddUser={handleAddUser}
+                  onResetPassword={handleResetUserPassword}
                   onDeleteUser={handleDeleteUser}
                 />
               )}
 
-              {activeTab === 'audit-logs' && (
+              {activeTab === 'audit-logs' && currentUser.role !== 'Viewer' && (
                 <AuditLogsView logs={auditLogs} />
               )}
 
-              {activeTab === 'settings' && (
+              {activeTab === 'settings' && currentUser.role === 'Administrator' && (
                 <SettingsView
                   userRole={currentUser.role}
                   onResetData={handleResetData}
@@ -497,22 +586,30 @@ export default function App() {
         initialYear={recapYear}
       />
 
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        userEmail={currentUser.email}
+        onSuccessToast={(msg) => showToast('success', msg)}
+      />
+
       {/* Floating Toast Notification */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border text-xs font-semibold animate-in slide-in-from-bottom-5 duration-200 bg-white">
+        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border border-stone-200 text-xs font-semibold animate-in slide-in-from-bottom-5 duration-200 bg-[#FCFBF8]">
           {toast.type === 'success' && (
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" strokeWidth={1.75} />
           )}
           {toast.type === 'error' && (
-            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" strokeWidth={1.75} />
           )}
           {toast.type === 'warning' && (
-            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" strokeWidth={1.75} />
           )}
-          <span className="text-slate-800 leading-tight max-w-sm">{toast.message}</span>
+          <span className="text-stone-800 leading-tight max-w-sm">{toast.message}</span>
           <button
             onClick={() => setToast(null)}
-            className="text-slate-400 hover:text-slate-600 ml-2"
+            className="text-stone-400 hover:text-stone-600 ml-2"
           >
             <X className="w-4 h-4" />
           </button>

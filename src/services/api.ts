@@ -1,5 +1,6 @@
 import {
   AuditLog,
+  AuthResponse,
   CampusEvent,
   ConflictCheckResult,
   FilterOptions,
@@ -8,8 +9,92 @@ import {
 } from '../types';
 
 const API_BASE = '/api';
+const TOKEN_KEY = 'stekom_auth_token';
+
+export function getStoredToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredToken(token: string | null) {
+  try {
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = getStoredToken();
+  const headers = new Headers(init.headers || {});
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return fetch(input, { ...init, headers });
+}
 
 export const api = {
+  // Authentication
+  async login(email: string, password: string): Promise<AuthResponse> {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Email atau kata sandi salah.');
+    }
+    const data: AuthResponse = await res.json();
+    setStoredToken(data.token);
+    return data;
+  },
+
+  async logout(): Promise<void> {
+    try {
+      const token = getStoredToken();
+      if (token) {
+        await authFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+      }
+    } finally {
+      setStoredToken(null);
+    }
+  },
+
+  async getMe(): Promise<User> {
+    const res = await authFetch(`${API_BASE}/auth/me`);
+    if (!res.ok) {
+      if (res.status === 401) {
+        setStoredToken(null);
+      }
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Sesi tidak valid');
+    }
+    return res.json();
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    const res = await authFetch(`${API_BASE}/auth/change-password`, {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Gagal memperbarui kata sandi');
+    }
+    return res.json();
+  },
+
   // System Status
   async getStatus() {
     const res = await fetch(`${API_BASE}/status`);
@@ -19,26 +104,27 @@ export const api = {
 
   // Reset to initial demo data
   async resetData(user_name?: string, user_role?: string) {
-    const res = await fetch(`${API_BASE}/reset-data`, {
+    const res = await authFetch(`${API_BASE}/reset-data`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name, user_role })
     });
-    if (!res.ok) throw new Error('Failed to reset data');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to reset data');
+    }
     return res.json();
   },
 
   // Rooms API
   async getRooms(): Promise<Room[]> {
-    const res = await fetch(`${API_BASE}/rooms`);
+    const res = await authFetch(`${API_BASE}/rooms`);
     if (!res.ok) throw new Error('Gagal memuat data ruangan');
     return res.json();
   },
 
   async createRoom(room: Partial<Room>, currentUser?: User): Promise<Room> {
-    const res = await fetch(`${API_BASE}/rooms`, {
+    const res = await authFetch(`${API_BASE}/rooms`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...room, current_user: currentUser })
     });
     if (!res.ok) {
@@ -49,9 +135,8 @@ export const api = {
   },
 
   async updateRoom(id: string, room: Partial<Room>, currentUser?: User): Promise<Room> {
-    const res = await fetch(`${API_BASE}/rooms/${id}`, {
+    const res = await authFetch(`${API_BASE}/rooms/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...room, current_user: currentUser })
     });
     if (!res.ok) {
@@ -66,7 +151,7 @@ export const api = {
     if (userName) url.searchParams.set('user_name', userName);
     if (userRole) url.searchParams.set('user_role', userRole);
 
-    const res = await fetch(url.toString(), {
+    const res = await authFetch(url.toString(), {
       method: 'DELETE'
     });
     if (!res.ok) {
@@ -88,7 +173,7 @@ export const api = {
       if (filters.search) url.searchParams.set('search', filters.search);
     }
 
-    const res = await fetch(url.toString());
+    const res = await authFetch(url.toString());
     if (!res.ok) throw new Error('Gagal memuat data event');
     return res.json();
   },
@@ -101,9 +186,8 @@ export const api = {
     ruangan_ids: string[];
     status?: string;
   }): Promise<ConflictCheckResult> {
-    const res = await fetch(`${API_BASE}/events/check-conflict`, {
+    const res = await authFetch(`${API_BASE}/events/check-conflict`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(eventData)
     });
     if (!res.ok) throw new Error('Gagal memeriksa bentrok jadwal');
@@ -111,9 +195,8 @@ export const api = {
   },
 
   async createEvent(eventData: Partial<CampusEvent>, currentUser?: User): Promise<CampusEvent> {
-    const res = await fetch(`${API_BASE}/events`, {
+    const res = await authFetch(`${API_BASE}/events`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...eventData, current_user: currentUser })
     });
     if (!res.ok) {
@@ -124,9 +207,8 @@ export const api = {
   },
 
   async updateEvent(id: string, eventData: Partial<CampusEvent>, currentUser?: User): Promise<CampusEvent> {
-    const res = await fetch(`${API_BASE}/events/${id}`, {
+    const res = await authFetch(`${API_BASE}/events/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...eventData, current_user: currentUser })
     });
     if (!res.ok) {
@@ -141,7 +223,7 @@ export const api = {
     if (userName) url.searchParams.set('user_name', userName);
     if (userRole) url.searchParams.set('user_role', userRole);
 
-    const res = await fetch(url.toString(), {
+    const res = await authFetch(url.toString(), {
       method: 'DELETE'
     });
     if (!res.ok) {
@@ -153,15 +235,14 @@ export const api = {
 
   // Users API
   async getUsers(): Promise<User[]> {
-    const res = await fetch(`${API_BASE}/users`);
+    const res = await authFetch(`${API_BASE}/users`);
     if (!res.ok) throw new Error('Gagal memuat pengguna');
     return res.json();
   },
 
-  async createUser(user: Partial<User>, currentUser?: User): Promise<User> {
-    const res = await fetch(`${API_BASE}/users`, {
+  async createUser(user: Partial<User> & { password?: string }, currentUser?: User): Promise<User> {
+    const res = await authFetch(`${API_BASE}/users`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...user, current_user: currentUser })
     });
     if (!res.ok) {
@@ -171,10 +252,9 @@ export const api = {
     return res.json();
   },
 
-  async updateUser(id: string, user: Partial<User>, currentUser?: User): Promise<User> {
-    const res = await fetch(`${API_BASE}/users/${id}`, {
+  async updateUser(id: string, user: Partial<User> & { new_password?: string }, currentUser?: User): Promise<User> {
+    const res = await authFetch(`${API_BASE}/users/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...user, current_user: currentUser })
     });
     if (!res.ok) {
@@ -189,7 +269,7 @@ export const api = {
     if (userName) url.searchParams.set('user_name', userName);
     if (userRole) url.searchParams.set('user_role', userRole);
 
-    const res = await fetch(url.toString(), {
+    const res = await authFetch(url.toString(), {
       method: 'DELETE'
     });
     if (!res.ok) {
@@ -201,32 +281,34 @@ export const api = {
 
   // Audit Logs
   async getAuditLogs(): Promise<AuditLog[]> {
-    const res = await fetch(`${API_BASE}/audit-logs`);
+    const res = await authFetch(`${API_BASE}/audit-logs`);
     if (!res.ok) throw new Error('Gagal memuat riwayat audit');
     return res.json();
   },
 
   // Dashboard Stats
   async getStats() {
-    const res = await fetch(`${API_BASE}/stats`);
+    const res = await authFetch(`${API_BASE}/stats`);
     if (!res.ok) throw new Error('Gagal memuat statistik dashboard');
     return res.json();
   },
 
   // Settings
   async getSettings() {
-    const res = await fetch(`${API_BASE}/settings`);
+    const res = await authFetch(`${API_BASE}/settings`);
     if (!res.ok) throw new Error('Gagal memuat pengaturan sistem');
     return res.json();
   },
 
   async updateSettings(settings: any) {
-    const res = await fetch(`${API_BASE}/settings`, {
+    const res = await authFetch(`${API_BASE}/settings`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings)
     });
-    if (!res.ok) throw new Error('Gagal memperbarui pengaturan');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Gagal memperbarui pengaturan');
+    }
     return res.json();
   }
 };

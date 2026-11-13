@@ -50,12 +50,17 @@ export interface AuditLog {
   id: string;
   user_name: string;
   user_role: UserRole;
-  action: 'TAMBAH' | 'UBAH' | 'HAPUS' | 'KONFIRMASI' | 'BATALKAN' | 'RUANGAN_STATUS' | 'LOGIN' | 'PENGATURAN';
+  action: 'TAMBAH' | 'UBAH' | 'HAPUS' | 'KONFIRMASI' | 'BATALKAN' | 'RUANGAN_STATUS' | 'LOGIN' | 'LOGOUT' | 'PENGATURAN';
   target_type: 'Event' | 'Ruangan' | 'Pengguna' | 'Sistem';
   target_id?: string;
   target_name: string;
   details: string;
   timestamp: string; // ISO string
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
 }
 
 export interface ConflictInfo {

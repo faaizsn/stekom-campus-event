@@ -64,6 +64,8 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ logs }) => {
             className="px-3 py-1.5 text-xs bg-stone-50/80 border border-stone-200 rounded-xl font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
           >
             <option value="all">Semua Tindakan</option>
+            <option value="LOGIN">Login Pengguna</option>
+            <option value="LOGOUT">Logout Pengguna</option>
             <option value="TAMBAH">Tambah Data</option>
             <option value="UBAH">Ubah Data</option>
             <option value="KONFIRMASI">Konfirmasi Jadwal</option>
@@ -98,14 +100,15 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ logs }) => {
             const isConfirm = log.action === 'KONFIRMASI';
             const isCancel = log.action === 'BATALKAN';
             const isDelete = log.action === 'HAPUS';
-            const isEdit = log.action === 'UBAH';
+            const isLogin = log.action === 'LOGIN';
+            const isLogout = log.action === 'LOGOUT';
 
-            const badgeBg = isConfirm
+            const badgeBg = isConfirm || isLogin
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-              : isCancel
+              : isCancel || isDelete
               ? 'bg-rose-50 text-rose-800 border-rose-200'
-              : isDelete
-              ? 'bg-rose-50 text-rose-800 border-rose-200'
+              : isLogout
+              ? 'bg-amber-50 text-amber-800 border-amber-200'
               : isAdd
               ? 'bg-blue-50 text-blue-800 border-blue-200'
               : 'bg-indigo-50 text-indigo-800 border-indigo-200';

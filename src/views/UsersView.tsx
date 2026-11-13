@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
-  AlertTriangle,
+  AlertCircle,
+  Info,
+  KeyRound,
   Mail,
-  Phone,
   Plus,
   Shield,
   Trash2,
@@ -17,7 +18,8 @@ import { formatDateIndo } from '../utils/conflictDetector';
 interface UsersViewProps {
   users: User[];
   currentUser: User;
-  onAddUser: (user: Partial<User>) => Promise<void>;
+  onAddUser: (user: Partial<User> & { password?: string }) => Promise<void>;
+  onResetPassword: (userId: string, newPassword: string) => Promise<void>;
   onDeleteUser: (id: string) => Promise<void>;
 }
 
@@ -25,19 +27,39 @@ export const UsersView: React.FC<UsersViewProps> = ({
   users,
   currentUser,
   onAddUser,
+  onResetPassword,
   onDeleteUser
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('Operator');
   const [department, setDepartment] = useState('Biro Sarana Prasarana');
   const [phone, setPhone] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Reset Password Modal
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  // Delete Confirmation Modal
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim()) return;
+    setFormError(null);
+    if (!name.trim() || !email.trim()) {
+      setFormError('Nama lengkap dan email wajib diisi.');
+      return;
+    }
+    if (password.trim() && password.trim().length < 6) {
+      setFormError('Kata sandi awal minimal 6 karakter (atau kosongkan untuk default: stekom123).');
+      return;
+    }
 
     try {
       setLoading(true);
@@ -46,16 +68,38 @@ export const UsersView: React.FC<UsersViewProps> = ({
         email: email.trim(),
         role,
         department: department.trim(),
-        phone: phone.trim()
+        phone: phone.trim(),
+        password: password.trim() || undefined
       });
       setModalOpen(false);
       setName('');
       setEmail('');
+      setPassword('');
       setPhone('');
     } catch (err: any) {
-      alert(err.message || 'Gagal menambahkan pengguna');
+      setFormError(err.message || 'Gagal menambahkan pengguna');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetTarget) return;
+    setResetError(null);
+    if (newPassword.trim().length < 6) {
+      setResetError('Kata sandi baru minimal harus 6 karakter.');
+      return;
+    }
+    try {
+      setResetLoading(true);
+      await onResetPassword(resetTarget.id, newPassword.trim());
+      setResetTarget(null);
+      setNewPassword('');
+    } catch (err: any) {
+      setResetError(err.message || 'Gagal mereset kata sandi');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -64,67 +108,84 @@ export const UsersView: React.FC<UsersViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center space-x-2">
-            <Users className="w-6 h-6 text-blue-600" />
+          <h1 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight flex items-center space-x-2.5">
+            <Users className="w-6 h-6 text-blue-700" strokeWidth={1.75} />
             <span>Manajemen Pengguna & Hak Akses (RBAC)</span>
           </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Pengaturan peran Administrator, Operator, dan Viewer dalam ekosistem kampus STEKOM
+          <p className="text-xs text-stone-500 mt-1 font-medium">
+            Pengaturan akun login, kata sandi, dan peran Administrator, Operator, serta Viewer Universitas STEKOM
           </p>
         </div>
 
         <button
-          onClick={() => setModalOpen(true)}
-          className="inline-flex items-center space-x-2 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-98 rounded-xl shadow-md shadow-blue-500/20 transition self-start sm:self-auto"
+          onClick={() => {
+            setFormError(null);
+            setModalOpen(true);
+          }}
+          className="inline-flex items-center space-x-2 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-blue-700 to-slate-800 hover:from-blue-800 hover:to-slate-900 active:scale-98 rounded-xl shadow-md shadow-blue-900/15 transition self-start sm:self-auto"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-4 h-4" strokeWidth={1.75} />
           <span>Tambah Pengguna Baru</span>
         </button>
       </div>
 
       {/* Role explanation cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-        <div className="p-4 rounded-2xl bg-white border border-blue-200/90 shadow-xs">
-          <div className="flex items-center space-x-2 text-blue-600 font-bold text-xs mb-1">
-            <Shield className="w-4 h-4" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="p-4 rounded-[22px] bg-[#FCFBF8] border border-blue-200/80 shadow-xs">
+          <div className="flex items-center space-x-2 text-blue-700 font-bold text-xs mb-1.5">
+            <Shield className="w-4 h-4" strokeWidth={1.75} />
             <span>Administrator</span>
           </div>
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            Akses tak terbatas: CRUD seluruh jadwal event, konfirmasi dan pembatalan, manajemen 21 ruangan, kelola akun pengguna, dan audit log lengkap.
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            Akses penuh: CRUD event, konfirmasi & pembatalan, manajemen 21 ruangan, kelola akun pengguna, reset kata sandi, audit log, dan pengaturan.
           </p>
         </div>
 
-        <div className="p-4 rounded-2xl bg-white border border-emerald-200/90 shadow-xs">
-          <div className="flex items-center space-x-2 text-emerald-600 font-bold text-xs mb-1">
-            <UserCheck className="w-4 h-4" />
+        <div className="p-4 rounded-[22px] bg-[#FCFBF8] border border-emerald-200/80 shadow-xs">
+          <div className="flex items-center space-x-2 text-emerald-700 font-bold text-xs mb-1.5">
+            <UserCheck className="w-4 h-4" strokeWidth={1.75} />
             <span>Operator</span>
           </div>
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            Kelola event dan penjadwalan ruangan, memvalidasi permohonan peminjaman, monitoring ruangan, serta mencetak laporan resmi kampus.
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            Kelola event dan penjadwalan ruangan, memvalidasi status Scheduled/Dibatalkan, monitoring ruangan, dan mengunduh rekap bulanan.
           </p>
         </div>
 
-        <div className="p-4 rounded-2xl bg-white border border-indigo-200/90 shadow-xs">
-          <div className="flex items-center space-x-2 text-indigo-600 font-bold text-xs mb-1">
-            <UserIcon className="w-4 h-4" />
+        <div className="p-4 rounded-[22px] bg-[#FCFBF8] border border-amber-200/80 shadow-xs">
+          <div className="flex items-center space-x-2 text-amber-700 font-bold text-xs mb-1.5">
+            <UserIcon className="w-4 h-4" strokeWidth={1.75} />
             <span>Viewer</span>
           </div>
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            Mode baca saja (Read-only): melihat dashboard, mengecek kalender acara, memantau ketersediaan ruangan hari ini, dan mengunduh laporan PDF/Excel.
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            Mode baca saja (Read-only): melihat dashboard, mengecek kalender acara, memantau ketersediaan ruangan, dan mengunduh rekap PDF/Excel.
+          </p>
+        </div>
+      </div>
+
+      {/* Info Akun Bawaan & Kebijakan Sandi */}
+      <div className="p-4 rounded-[22px] bg-[#FCFBF8] border border-stone-200/90 shadow-xs flex items-start space-x-3 text-xs">
+        <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" strokeWidth={1.75} />
+        <div className="space-y-1 text-stone-600 leading-relaxed">
+          <p className="font-bold text-stone-800">Informasi Akun & Kata Sandi Login</p>
+          <p className="text-[11px]">
+            Akun bawaan: <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono text-stone-800">admin@stekom.ac.id</code> (sandi: <strong>admin123</strong>),{' '}
+            <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono text-stone-800">operator@stekom.ac.id</code> (sandi: <strong>operator123</strong>),{' '}
+            <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono text-stone-800">viewer@stekom.ac.id</code> (sandi: <strong>viewer123</strong>).{' '}
+            Pengguna baru yang dibuat tanpa mengisi kata sandi awal akan mendapatkan kata sandi default <strong>stekom123</strong>.
           </p>
         </div>
       </div>
 
       {/* User Table */}
-      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
-        <div className="p-4 sm:p-5 border-b border-slate-100 font-bold text-xs text-slate-800">
-          Daftar Pengguna Terdaftar ({users.length} Akun)
+      <div className="bg-[#FCFBF8] rounded-[26px] border border-stone-200/90 shadow-xs overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-stone-200/80 font-bold text-xs text-stone-800 flex items-center justify-between">
+          <span>Daftar Pengguna Terdaftar ({users.length} Akun)</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase">
+              <tr className="bg-[#F7F5F0] border-b border-stone-200 text-[11px] font-bold text-stone-500 uppercase">
                 <th className="py-3 px-4">Nama & Email</th>
                 <th className="py-3 px-4">Peran Hak Akses</th>
                 <th className="py-3 px-4">Unit / Departemen</th>
@@ -133,22 +194,22 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <th className="py-3 px-4 text-right">Aksi</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-stone-200/70">
               {users.map((u) => {
                 const isSelf = u.id === currentUser.id;
                 const roleBadge =
                   u.role === 'Administrator'
-                    ? 'bg-blue-100 text-blue-800 border-blue-200'
+                    ? 'bg-blue-50 text-blue-800 border-blue-200/80'
                     : u.role === 'Operator'
-                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                    : 'bg-indigo-100 text-indigo-800 border-indigo-200';
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200/80'
+                    : 'bg-amber-50 text-amber-800 border-amber-200/80';
 
                 return (
-                  <tr key={u.id} className="hover:bg-slate-50/70">
+                  <tr key={u.id} className="hover:bg-[#F7F5F0]/60 transition">
                     <td className="py-3.5 px-4">
-                      <div className="font-bold text-slate-900">{u.name}</div>
-                      <div className="text-[11px] text-slate-500 flex items-center space-x-1 mt-0.5">
-                        <Mail className="w-3 h-3 text-slate-400" />
+                      <div className="font-bold text-stone-900">{u.name}</div>
+                      <div className="text-[11px] text-stone-500 flex items-center space-x-1 mt-0.5">
+                        <Mail className="w-3 h-3 text-stone-400" strokeWidth={1.75} />
                         <span>{u.email}</span>
                       </div>
                     </td>
@@ -159,37 +220,47 @@ export const UsersView: React.FC<UsersViewProps> = ({
                       </span>
                     </td>
 
-                    <td className="py-3.5 px-4 font-medium text-slate-700">
+                    <td className="py-3.5 px-4 font-medium text-stone-700">
                       {u.department}
                     </td>
 
-                    <td className="py-3.5 px-4 text-slate-600">
+                    <td className="py-3.5 px-4 text-stone-600">
                       {u.phone || '-'}
                     </td>
 
-                    <td className="py-3.5 px-4 text-slate-400">
+                    <td className="py-3.5 px-4 text-stone-500 tabular-nums">
                       {u.created_at ? formatDateIndo(u.created_at.split('T')[0]) : '-'}
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      {!isSelf && (
+                      <div className="inline-flex items-center space-x-1.5">
                         <button
                           onClick={() => {
-                            if (window.confirm(`Hapus pengguna ${u.name}?`)) {
-                              onDeleteUser(u.id);
-                            }
+                            setResetTarget(u);
+                            setNewPassword('');
+                            setResetError(null);
                           }}
-                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition"
-                          title="Hapus Pengguna"
+                          className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-blue-700 bg-blue-50/80 hover:bg-blue-100 border border-blue-200/70 transition"
+                          title="Reset Kata Sandi Pengguna"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <KeyRound className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          <span>Reset Sandi</span>
                         </button>
-                      )}
-                      {isSelf && (
-                        <span className="text-[10px] text-slate-400 font-semibold italic">
-                          (Akun Anda)
-                        </span>
-                      )}
+
+                        {!isSelf ? (
+                          <button
+                            onClick={() => setDeleteTarget(u)}
+                            className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition"
+                            title="Hapus Pengguna"
+                          >
+                            <Trash2 className="w-4 h-4" strokeWidth={1.75} />
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-stone-400 font-semibold italic px-1.5">
+                            (Akun Anda)
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -201,48 +272,71 @@ export const UsersView: React.FC<UsersViewProps> = ({
 
       {/* Add User Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
+          <div className="bg-[#FCFBF8] rounded-[26px] shadow-2xl max-w-md w-full p-6 border border-stone-200/90 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200/80">
+              <h3 className="text-sm font-extrabold text-stone-900">
                 Tambah Akun Pengguna Baru
               </h3>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
+              <button
+                onClick={() => setModalOpen(false)}
+                className="p-1.5 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-100"
+              >
+                <X className="w-4 h-4" strokeWidth={1.75} />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 py-4 text-xs">
+              {formError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" strokeWidth={1.75} />
+                  <span className="font-medium">{formError}</span>
+                </div>
+              )}
+
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Nama Lengkap & Gelar</label>
+                <label className="block font-bold text-stone-700 mb-1">Nama Lengkap & Gelar</label>
                 <input
                   type="text"
                   required
                   placeholder="Misal: Dr. Eko Prasetyo, M.Kom"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Email Kampus (@stekom.ac.id)</label>
+                <label className="block font-bold text-stone-700 mb-1">Email Kampus (@stekom.ac.id)</label>
                 <input
                   type="email"
                   required
                   placeholder="nama@stekom.ac.id"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Peran Hak Akses (Role)</label>
+                <label className="block font-bold text-stone-700 mb-1">
+                  Kata Sandi Awal <span className="text-stone-400 font-normal">(opsional, default: stekom123)</span>
+                </label>
+                <input
+                  type="password"
+                  placeholder="Kosongkan untuk pakai default: stekom123"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">Peran Hak Akses (Role)</label>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 font-bold"
                 >
                   <option value="Operator">Operator (Kelola Event & Ruangan)</option>
                   <option value="Administrator">Administrator (Akses Penuh)</option>
@@ -251,44 +345,141 @@ export const UsersView: React.FC<UsersViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Unit / Bagian</label>
+                <label className="block font-bold text-stone-700 mb-1">Unit / Bagian</label>
                 <input
                   type="text"
                   placeholder="Bagian Rumah Tangga / Program Studi / BEM"
                   value={department}
                   onChange={(e) => setDepartment(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Nomor Telepon / WhatsApp</label>
+                <label className="block font-bold text-stone-700 mb-1">Nomor Telepon / WhatsApp</label>
                 <input
                   type="tel"
                   placeholder="081234567890"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
                 />
               </div>
 
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <div className="pt-3 border-t border-stone-200/80 flex items-center justify-end space-x-2">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-3.5 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition"
+                  className="px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl shadow-xs transition"
                 >
                   {loading ? 'Menyimpan...' : 'Simpan Pengguna'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
+          <div className="bg-[#FCFBF8] rounded-[26px] shadow-2xl max-w-sm w-full p-6 border border-stone-200/90 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200/80">
+              <div className="flex items-center space-x-2">
+                <KeyRound className="w-4 h-4 text-blue-700" strokeWidth={1.75} />
+                <h3 className="text-sm font-extrabold text-stone-900">Reset Kata Sandi</h3>
+              </div>
+              <button
+                onClick={() => setResetTarget(null)}
+                className="p-1 rounded-xl text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            </div>
+
+            <form onSubmit={handleResetSubmit} className="space-y-4 pt-4 text-xs">
+              <div className="p-3 rounded-xl bg-[#F7F5F0] border border-stone-200/80">
+                <p className="font-bold text-stone-900">{resetTarget.name}</p>
+                <p className="text-[11px] text-stone-500">{resetTarget.email}</p>
+              </div>
+
+              {resetError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
+                  {resetError}
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1.5">
+                  Kata Sandi Baru (min. 6 karakter)
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  placeholder="Masukkan kata sandi baru"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setResetTarget(null)}
+                  className="px-3.5 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl shadow-xs transition"
+                >
+                  {resetLoading ? 'Menyimpan...' : 'Simpan Sandi Baru'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
+          <div className="bg-[#FCFBF8] rounded-[26px] shadow-2xl max-w-sm w-full p-6 border border-stone-200/90 animate-in fade-in zoom-in-95 text-xs space-y-4">
+            <h3 className="text-sm font-extrabold text-stone-900">Hapus Akun Pengguna?</h3>
+            <p className="text-stone-600 leading-relaxed">
+              Apakah Anda yakin ingin menghapus akun <strong>{deleteTarget.name}</strong> ({deleteTarget.email})? Pengguna ini tidak akan bisa login lagi.
+            </p>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="px-3.5 py-2 font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const targetId = deleteTarget.id;
+                  setDeleteTarget(null);
+                  await onDeleteUser(targetId);
+                }}
+                className="px-4 py-2 font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition"
+              >
+                Ya, Hapus Akun
+              </button>
+            </div>
           </div>
         </div>
       )}

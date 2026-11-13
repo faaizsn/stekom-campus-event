@@ -59,7 +59,7 @@ export const RoomMonitoringView: React.FC<RoomMonitoringViewProps> = ({
         )
         .sort((a, b) => a.jam_mulai.localeCompare(b.jam_mulai));
 
-      const live = getRoomLiveStatus(room, dayEvents, selectedDate);
+      const live = getRoomLiveStatus(room.id, dayEvents, selectedDate);
 
       return {
         room,

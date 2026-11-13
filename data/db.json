@@ -398,42 +398,6 @@
       "created_by": "Rahmat Hidayat, S.Kom"
     },
     {
-      "id": "evt-003",
-      "nama_event": "Rapat Senat Akademik: Evaluasi Kurikulum OBE 2027",
-      "tanggal": "2026-11-11",
-      "jam_mulai": "09:00",
-      "jam_selesai": "12:30",
-      "jumlah_peserta": 40,
-      "pic": "Prof. Suparyanto, M.Kom",
-      "nomor_hp_pic": "081566778899",
-      "ruangan_ids": [
-        "room-pertemuan-lt2"
-      ],
-      "status": "Scheduled",
-      "catatan": "Konsumsi disediakan oleh Bagian Umum, siapkan smart TV untuk presentasi materi kurikulum.",
-      "created_at": "2026-11-03T08:30:00.000Z",
-      "updated_at": "2026-11-03T08:30:00.000Z",
-      "created_by": "Dr. Ir. Agus Wibowo, M.Kom"
-    },
-    {
-      "id": "evt-004",
-      "nama_event": "Seminar Nasional Rekayasa Perangkat Lunak & Cloud Native",
-      "tanggal": "2026-11-12",
-      "jam_mulai": "08:00",
-      "jam_selesai": "15:00",
-      "jumlah_peserta": 100,
-      "pic": "Hendra Gunawan, M.Cs",
-      "nomor_hp_pic": "081778899001",
-      "ruangan_ids": [
-        "room-conf-lt1"
-      ],
-      "status": "Scheduled",
-      "catatan": "Live streaming di kanal YouTube Universitas STEKOM. Pasang dual proyektor laser.",
-      "created_at": "2026-11-03T14:00:00.000Z",
-      "updated_at": "2026-11-04T09:15:00.000Z",
-      "created_by": "Rahmat Hidayat, S.Kom"
-    },
-    {
       "id": "evt-005",
       "nama_event": "Latihan Kolaborasi Band Dies Natalis STEKOM",
       "tanggal": "2026-11-10",
@@ -450,43 +414,6 @@
       "created_at": "2026-11-05T10:20:00.000Z",
       "updated_at": "2026-11-05T10:20:00.000Z",
       "created_by": "Siti Nurhaliza"
-    },
-    {
-      "id": "evt-006",
-      "nama_event": "Simulasi Sidang Semu Cyber Law & HAKI STEKOM",
-      "tanggal": "2026-11-13",
-      "jam_mulai": "10:00",
-      "jam_selesai": "13:00",
-      "jumlah_peserta": 35,
-      "pic": "Farida Kusumawardani, S.H., M.H.",
-      "nomor_hp_pic": "081299887766",
-      "ruangan_ids": [
-        "room-ruang-hukum"
-      ],
-      "status": "Scheduled",
-      "catatan": "Uji kompetensi mahasiswa Fakultas Hukum & Bisnis STEKOM.",
-      "created_at": "2026-11-04T13:40:00.000Z",
-      "updated_at": "2026-11-04T13:40:00.000Z",
-      "created_by": "Dr. Ir. Agus Wibowo, M.Kom"
-    },
-    {
-      "id": "evt-007",
-      "nama_event": "STEKOM Tech & Art Expo 2026 (Pameran Karya Inovatif)",
-      "tanggal": "2026-11-14",
-      "jam_mulai": "08:00",
-      "jam_selesai": "17:00",
-      "jumlah_peserta": 400,
-      "pic": "Eko Setyawan, S.Sn, M.Kom",
-      "nomor_hp_pic": "081344556677",
-      "ruangan_ids": [
-        "room-aula-utama",
-        "room-conf-lt1"
-      ],
-      "status": "Scheduled",
-      "catatan": "Event multi-ruangan untuk pameran hardware IoT, robotika, dan instalasi desain grafis.",
-      "created_at": "2026-11-01T15:00:00.000Z",
-      "updated_at": "2026-11-02T16:00:00.000Z",
-      "created_by": "Dr. Ir. Agus Wibowo, M.Kom"
     },
     {
       "id": "evt-008",
@@ -507,25 +434,6 @@
       "created_by": "Rahmat Hidayat, S.Kom"
     },
     {
-      "id": "evt-009",
-      "nama_event": "Bimbingan Skripsi & Ujian Terbuka Tahap 1",
-      "tanggal": "2026-11-16",
-      "jam_mulai": "09:00",
-      "jam_selesai": "12:00",
-      "jumlah_peserta": 8,
-      "pic": "Ir. Wahyu Tri Wibowo, M.Cs",
-      "nomor_hp_pic": "081255667788",
-      "ruangan_ids": [
-        "room-b-2-7-1",
-        "room-b-2-7-2"
-      ],
-      "status": "Menunggu Konfirmasi",
-      "catatan": "Memerlukan 2 ruangan diskusi bimbingan skripsi paralel.",
-      "created_at": "2026-11-06T11:00:00.000Z",
-      "updated_at": "2026-11-06T11:00:00.000Z",
-      "created_by": "Rahmat Hidayat, S.Kom"
-    },
-    {
       "id": "evt-010",
       "nama_event": "Kuliah Praktikum Pemrograman Web Lanjut",
       "tanggal": "2026-11-10",
@@ -542,27 +450,6 @@
       "created_at": "2026-11-05T08:00:00.000Z",
       "updated_at": "2026-11-05T08:00:00.000Z",
       "created_by": "Dr. Ir. Agus Wibowo, M.Kom"
-    },
-    {
-      "id": "evt-1794278327865",
-      "nama_event": "Kunjungan Industri SMK Ganesha",
-      "tanggal": "2026-11-18",
-      "jam_mulai": "09:00",
-      "jam_selesai": "12:00",
-      "jumlah_peserta": 500,
-      "pic": "Ayu Fitri",
-      "nomor_hp_pic": "08888555566",
-      "ruangan_ids": [
-        "room-aula-utama",
-        "room-pertemuan-lt2",
-        "room-lab-sepeda-listrik",
-        "room-conf-lt1"
-      ],
-      "status": "Scheduled",
-      "catatan": "",
-      "created_at": "2026-11-10T02:38:47.865Z",
-      "updated_at": "2026-11-10T02:38:47.865Z",
-      "created_by": "Rahmat Hidayat, S.Kom"
     }
   ],
   "users": [
@@ -573,7 +460,8 @@
       "role": "Administrator",
       "department": "Biro Administrasi Akademik & Sarpras",
       "phone": "081234567890",
-      "created_at": "2026-01-01T08:00:00.000Z"
+      "created_at": "2026-01-01T08:00:00.000Z",
+      "password_hash": "c42e8f3e1c2b112f91be7e64951c99d0:2aa6947dfc890cdea40966085ee8a9b6ddb6bea77eb14b69bcddaf71ab5dc167d8008381b8f2025d8a126e5475e29526f231712463ec2035f74d6343eabb70ba"
     },
     {
       "id": "user-operator",
@@ -582,7 +470,8 @@
       "role": "Operator",
       "department": "Bagian Rumah Tangga & Penjadwalan",
       "phone": "081398765432",
-      "created_at": "2026-01-05T08:00:00.000Z"
+      "created_at": "2026-01-05T08:00:00.000Z",
+      "password_hash": "0a94fdd30a4210b9bfe21e4eece66426:b10fe8738e39c387ef1ff91e5f63e410406e8eec294698cc29bcbc0baf691c85a9025bf8484c03fc609dcbc2367ab4de1845c4dd7e5796b344a7a54653c16d83"
     },
     {
       "id": "user-viewer",
@@ -591,10 +480,121 @@
       "role": "Viewer",
       "department": "BEM Universitas STEKOM",
       "phone": "085712349988",
-      "created_at": "2026-02-01T08:00:00.000Z"
+      "created_at": "2026-02-01T08:00:00.000Z",
+      "password_hash": "42147e19df8f18bcd6821efd8e013c1d:76933551d6373b36e4572159cb80d8d6e9286b98cafeee60d7ecd6ee4e33c98e4a6a96c0b749a2c58422364abfe8d15cedfd89e38193cea86bed73aafa473ae0"
     }
   ],
   "audit_logs": [
+    {
+      "id": "log-1794537657752",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "LOGOUT",
+      "target_type": "Sistem",
+      "target_id": "user-admin",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Dr. Ir. Agus Wibowo, M.Kom (admin@stekom.ac.id) keluar (logout) dari sistem",
+      "timestamp": "2026-11-13T02:40:57.752Z"
+    },
+    {
+      "id": "log-1794537657497",
+      "user_name": "Siti Nurhaliza",
+      "user_role": "Viewer",
+      "action": "LOGIN",
+      "target_type": "Sistem",
+      "target_id": "user-viewer",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Siti Nurhaliza (viewer@stekom.ac.id) masuk ke sistem sebagai Viewer",
+      "timestamp": "2026-11-13T02:40:57.497Z"
+    },
+    {
+      "id": "log-1794537657422",
+      "user_name": "Rahmat Hidayat, S.Kom",
+      "user_role": "Operator",
+      "action": "LOGIN",
+      "target_type": "Sistem",
+      "target_id": "user-operator",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Rahmat Hidayat, S.Kom (operator@stekom.ac.id) masuk ke sistem sebagai Operator",
+      "timestamp": "2026-11-13T02:40:57.422Z"
+    },
+    {
+      "id": "log-1794537657348",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "LOGIN",
+      "target_type": "Sistem",
+      "target_id": "user-admin",
+      "target_name": "Autentikasi Pengguna",
+      "details": "Dr. Ir. Agus Wibowo, M.Kom (admin@stekom.ac.id) masuk ke sistem sebagai Administrator",
+      "timestamp": "2026-11-13T02:40:57.348Z"
+    },
+    {
+      "id": "log-1794537648628",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "HAPUS",
+      "target_type": "Event",
+      "target_id": "evt-003",
+      "target_name": "Rapat Senat Akademik: Evaluasi Kurikulum OBE 2027",
+      "details": "Menghapus event \"Rapat Senat Akademik: Evaluasi Kurikulum OBE 2027\" (Tanggal: 2026-11-11)",
+      "timestamp": "2026-11-13T02:40:48.628Z"
+    },
+    {
+      "id": "log-1794537645037",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "HAPUS",
+      "target_type": "Event",
+      "target_id": "evt-1794278327865",
+      "target_name": "Kunjungan Industri SMK Ganesha",
+      "details": "Menghapus event \"Kunjungan Industri SMK Ganesha\" (Tanggal: 2026-11-18)",
+      "timestamp": "2026-11-13T02:40:45.037Z"
+    },
+    {
+      "id": "log-1794537641268",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "HAPUS",
+      "target_type": "Event",
+      "target_id": "evt-004",
+      "target_name": "Seminar Nasional Rekayasa Perangkat Lunak & Cloud Native",
+      "details": "Menghapus event \"Seminar Nasional Rekayasa Perangkat Lunak & Cloud Native\" (Tanggal: 2026-11-12)",
+      "timestamp": "2026-11-13T02:40:41.268Z"
+    },
+    {
+      "id": "log-1794537637793",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "HAPUS",
+      "target_type": "Event",
+      "target_id": "evt-009",
+      "target_name": "Bimbingan Skripsi & Ujian Terbuka Tahap 1",
+      "details": "Menghapus event \"Bimbingan Skripsi & Ujian Terbuka Tahap 1\" (Tanggal: 2026-11-16)",
+      "timestamp": "2026-11-13T02:40:37.793Z"
+    },
+    {
+      "id": "log-1794537634659",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "HAPUS",
+      "target_type": "Event",
+      "target_id": "evt-007",
+      "target_name": "STEKOM Tech & Art Expo 2026 (Pameran Karya Inovatif)",
+      "details": "Menghapus event \"STEKOM Tech & Art Expo 2026 (Pameran Karya Inovatif)\" (Tanggal: 2026-11-14)",
+      "timestamp": "2026-11-13T02:40:34.659Z"
+    },
+    {
+      "id": "log-1794537630837",
+      "user_name": "Dr. Ir. Agus Wibowo, M.Kom",
+      "user_role": "Administrator",
+      "action": "HAPUS",
+      "target_type": "Event",
+      "target_id": "evt-006",
+      "target_name": "Simulasi Sidang Semu Cyber Law & HAKI STEKOM",
+      "details": "Menghapus event \"Simulasi Sidang Semu Cyber Law & HAKI STEKOM\" (Tanggal: 2026-11-13)",
+      "timestamp": "2026-11-13T02:40:30.837Z"
+    },
     {
       "id": "log-1794278327865",
       "user_name": "Rahmat Hidayat, S.Kom",
