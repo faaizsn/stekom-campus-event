@@ -1,9 +1,10 @@
 import crypto from 'crypto';
-import express, { NextFunction, Request, Response } from 'express';
+import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,17 +12,36 @@ const __dirname = path.dirname(__filename);
 const AUTH_SECRET = process.env.AUTH_SECRET || 'stekom-campus-event-mgmt-secret-2026';
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-const isProd = process.env.NODE_ENV === 'production';
-const PORT = 3000;
+const distPath = path.resolve(__dirname, 'dist');
+const isProd =
+  process.env.NODE_ENV === 'production' ||
+  (process.env.npm_lifecycle_event === 'start' && fs.existsSync(distPath));
+const PORT = Number(process.env.PORT) || 3000;
 
-// Data directory and file path
-const DATA_DIR = path.resolve(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Data directory and file path with safe fallback for read-only production filesystems
+function resolveDataDir(): string {
+  const preferred = path.resolve(__dirname, 'data');
+  try {
+    if (!fs.existsSync(preferred)) {
+      fs.mkdirSync(preferred, { recursive: true });
+    }
+    fs.accessSync(preferred, fs.constants.W_OK);
+    return preferred;
+  } catch {
+    const fallback = path.join(os.tmpdir(), 'stekom-campus-event-data');
+    try {
+      if (!fs.existsSync(fallback)) {
+        fs.mkdirSync(fallback, { recursive: true });
+      }
+    } catch {
+      // in-memory fallback will still work
+    }
+    return fallback;
+  }
 }
+
+const DATA_DIR = resolveDataDir();
+const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 // 21 Initial Rooms specified by Universitas STEKOM
 const INITIAL_ROOMS = [
@@ -676,6 +696,8 @@ function requireRoles(...allowedRoles: Array<DbUser['role']>) {
   };
 }
 
+let memoryDb: DatabaseSchema | null = null;
+
 function getDatabase(): DatabaseSchema {
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -700,13 +722,19 @@ function getDatabase(): DatabaseSchema {
         data.users = createSeedUsers();
         migrated = true;
       }
+      memoryDb = data;
       if (migrated) {
         saveDatabase(data);
       }
       return data;
     }
   } catch (err) {
-    console.error('Failed to read db.json, reinitializing default data:', err);
+    console.error('Failed to read db.json, falling back to memory/default data:', err);
+    if (memoryDb) return memoryDb;
+  }
+
+  if (memoryDb) {
+    return memoryDb;
   }
 
   // Initialize fresh
@@ -733,10 +761,11 @@ function getDatabase(): DatabaseSchema {
 }
 
 function saveDatabase(db: DatabaseSchema) {
+  memoryDb = db;
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Failed to write db.json:', err);
+    console.error('Failed to write db.json (data retained in memory):', err);
   }
 }
 
@@ -1631,15 +1660,20 @@ async function startServer() {
     });
   });
 
+  // Fallback JSON 404 for unknown /api routes
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({ error: `Endpoint API ${req.method} ${req.path} tidak ditemukan.` });
+  });
+
   // Setup Vite or Static File Serving
   if (!isProd) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1647,7 +1681,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`STEKOM Campus Event Management server running on http://0.0.0.0:${PORT}`);
+    console.log(`STEKOM Campus Event Management server running on http://0.0.0.0:${PORT} (mode: ${isProd ? 'production' : 'development'})`);
   });
 }
 

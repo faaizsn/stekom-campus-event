@@ -46,14 +46,25 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
 export const api = {
   // Authentication
   async login(email: string, password: string): Promise<AuthResponse> {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+    } catch {
+      throw new Error('Tidak dapat terhubung ke server backend. Periksa koneksi internet atau status server.');
+    }
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Email atau kata sandi salah.');
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Email atau kata sandi salah.');
+      }
+      throw new Error(
+        `Server backend tidak merespons endpoint autentikasi (HTTP ${res.status}). Pastikan layanan backend berjalan.`
+      );
     }
     const data: AuthResponse = await res.json();
     setStoredToken(data.token);
