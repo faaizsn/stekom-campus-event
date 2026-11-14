@@ -1,54 +1,13 @@
-import { deleteApp, initializeApp } from 'firebase/app';
-import {
-  EmailAuthProvider,
-  User as FirebaseUser,
-  createUserWithEmailAndPassword,
-  getAuth,
-  onAuthStateChanged,
-  reauthenticateWithCredential,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  signOut,
-  updatePassword,
-  updateProfile
-} from 'firebase/auth';
-import {
-  Timestamp,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch
-} from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
-import {
-  OperationType,
-  auth,
-  db,
-  googleAuthProvider,
-  handleFirestoreError
-} from '../lib/firebase';
 import {
   AuditLog,
+  AuthResponse,
   CampusEvent,
-  FilterOptions,
   Room,
-  User,
-  UserRole
+  User
 } from '../types';
-import { checkEventConflict } from '../utils/conflictDetector';
-import { INITIAL_AUDIT_LOGS, INITIAL_EVENTS, INITIAL_ROOMS } from './seedData';
 
-const CAMPUS_ID = 'stekom';
-const BOOTSTRAP_ADMIN_EMAILS = new Set(['mumahadfaiz@stekom.ac.id', 'admin@stekom.ac.id']);
+const TOKEN_STORAGE_KEY = 'stekom_auth_token';
+const USER_STORAGE_KEY = 'stekom_auth_user';
 
 export function normalizeLoginEmail(identifier: string): string {
   const trimmed = String(identifier || '').trim().toLowerCase();
@@ -56,348 +15,107 @@ export function normalizeLoginEmail(identifier: string): string {
   return trimmed.includes('@') ? trimmed : `${trimmed}@stekom.ac.id`;
 }
 
-function mapFirebaseAuthError(err: any, fallback: string): string {
-  const code = err?.code || '';
-  if (
-    code === 'auth/invalid-credential' ||
-    code === 'auth/wrong-password' ||
-    code === 'auth/user-not-found'
-  ) {
-    return 'Email/username atau kata sandi salah. Silakan periksa kembali.';
-  }
-  if (code === 'auth/invalid-email') {
-    return 'Format email tidak valid. Gunakan format email yang benar (misal: nama@stekom.ac.id).';
-  }
-  if (code === 'auth/user-disabled') {
-    return 'Akun ini sedang dinonaktifkan oleh Administrator.';
-  }
-  if (code === 'auth/too-many-requests') {
-    return 'Terlalu banyak percobaan login gagal. Tunggu beberapa saat lalu coba lagi.';
-  }
-  if (code === 'auth/operation-not-allowed') {
-    return 'Provider Email/Password belum diaktifkan di Firebase Console. Aktifkan di Firebase Console > Authentication > Sign-in method > Email/Password.';
-  }
-  if (code === 'auth/email-already-in-use') {
-    return 'Email ini sudah terdaftar pada Firebase Authentication.';
-  }
-  if (code === 'auth/weak-password') {
-    return 'Kata sandi terlalu lemah. Minimal harus terdiri dari 6 karakter.';
-  }
-  if (code === 'auth/requires-recent-login') {
-    return 'Demi keamanan, silakan keluar (logout) lalu masuk kembali sebelum mengubah kata sandi.';
-  }
-  return err?.message || fallback;
-}
-
-function toIsoString(val: unknown): string {
-  if (val instanceof Timestamp) {
-    return val.toDate().toISOString();
-  }
-  if (val && typeof val === 'object' && 'toDate' in val && typeof (val as any).toDate === 'function') {
-    return (val as any).toDate().toISOString();
-  }
-  if (typeof val === 'string' && val.trim()) {
-    return val;
-  }
-  return new Date().toISOString();
-}
-
-function makeId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function mapUserDoc(id: string, data: Record<string, any>, isPendingInvite = false): User {
-  return {
-    id,
-    name: String(data.name || data.email || 'Pengguna STEKOM'),
-    email: String(data.email || '').toLowerCase(),
-    role: (data.role as UserRole) || 'Viewer',
-    department: String(data.department || 'Universitas STEKOM'),
-    phone: data.phone ? String(data.phone) : '',
-    created_at: toIsoString(data.createdAt),
-    isPendingInvite
-  };
-}
-
-function mapRoomDoc(id: string, data: Record<string, any>): Room {
-  return {
-    id,
-    name: String(data.name || ''),
-    code: String(data.code || ''),
-    capacity: Number(data.capacity) || 0,
-    is_general: Boolean(data.is_general),
-    floor: String(data.floor || 'Lantai 1'),
-    building: String(data.building || 'Gedung Pusat STEKOM'),
-    facilities: Array.isArray(data.facilities) ? data.facilities.map(String) : [],
-    status: data.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia',
-    notes: data.notes ? String(data.notes) : ''
-  };
-}
-
-function mapEventDoc(id: string, data: Record<string, any>): CampusEvent {
-  return {
-    id,
-    nama_event: String(data.nama_event || ''),
-    tanggal: String(data.tanggal || ''),
-    jam_mulai: String(data.jam_mulai || ''),
-    jam_selesai: String(data.jam_selesai || ''),
-    jumlah_peserta: Number(data.jumlah_peserta) || 1,
-    pic: String(data.pic || ''),
-    nomor_hp_pic: String(data.nomor_hp_pic || ''),
-    ruangan_ids: Array.isArray(data.ruangan_ids) ? data.ruangan_ids.map(String) : [],
-    status: (data.status as CampusEvent['status']) || 'Menunggu Konfirmasi',
-    catatan: data.catatan ? String(data.catatan) : '',
-    created_at: toIsoString(data.createdAt),
-    updated_at: toIsoString(data.updatedAt),
-    created_by: String(data.created_by || 'Sistem')
-  };
-}
-
-function mapAuditLogDoc(id: string, data: Record<string, any>): AuditLog {
-  return {
-    id,
-    user_name: String(data.user_name || 'Pengguna'),
-    user_role: (data.user_role as UserRole) || 'Viewer',
-    action: (data.action as AuditLog['action']) || 'UBAH',
-    target_type: (data.target_type as AuditLog['target_type']) || 'Sistem',
-    target_id: data.target_id ? String(data.target_id) : undefined,
-    target_name: String(data.target_name || ''),
-    details: String(data.details || ''),
-    timestamp: toIsoString(data.createdAt)
-  };
-}
-
-async function writeAuditLog(
-  actor: User,
-  entry: {
-    action: AuditLog['action'];
-    target_type: AuditLog['target_type'];
-    target_id?: string;
-    target_name: string;
-    details: string;
-  }
-) {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return;
-  const logId = makeId('log');
-  const path = `audit_logs/${logId}`;
+function getStoredToken(): string | null {
   try {
-    await setDoc(doc(db, 'audit_logs', logId), {
-      id: logId,
-      campusId: CAMPUS_ID,
-      actorUid: uid,
-      user_name: actor.name.slice(0, 150),
-      user_role: actor.role,
-      action: entry.action,
-      target_type: entry.target_type,
-      ...(entry.target_id ? { target_id: entry.target_id.slice(0, 128) } : {}),
-      target_name: entry.target_name.slice(0, 200),
-      details: entry.details.slice(0, 500),
-      createdAt: serverTimestamp()
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredSession(token: string, user: User) {
+  try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function clearStoredSession() {
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_STORAGE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function apiRequest<T>(
+  path: string,
+  options: RequestInit = {},
+  requireToken = true
+): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options.headers as Record<string, string>) || {})
+  };
+
+  if (requireToken) {
+    const token = getStoredToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers
     });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+  } catch {
+    throw new Error('Tidak dapat terhubung ke server backend. Pastikan server sedang berjalan.');
   }
+
+  const contentType = response.headers.get('content-type') || '';
+  let data: any = null;
+  if (contentType.includes('application/json')) {
+    data = await response.json().catch(() => null);
+  } else {
+    const text = await response.text().catch(() => '');
+    data = text ? { message: text } : null;
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 && requireToken) {
+      clearStoredSession();
+    }
+    const errMsg =
+      data?.error ||
+      data?.message ||
+      `Permintaan ke server gagal (HTTP ${response.status}).`;
+    throw new Error(errMsg);
+  }
+
+  return data as T;
 }
 
-async function ensureSeedData(actor: User): Promise<void> {
-  if (actor.role !== 'Administrator' && actor.role !== 'Operator') return;
-  const roomsRef = collection(db, 'rooms');
-  let existingRoomsSnap;
-  try {
-    existingRoomsSnap = await getDocs(query(roomsRef, where('campusId', '==', CAMPUS_ID)));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, 'rooms');
-  }
-
-  if (!existingRoomsSnap.empty) return;
-
-  const uid = auth.currentUser?.uid;
-  if (!uid) return;
-
-  try {
-    const batch = writeBatch(db);
-
-    for (const room of INITIAL_ROOMS) {
-      batch.set(doc(db, 'rooms', room.id), {
-        id: room.id,
-        campusId: CAMPUS_ID,
-        name: room.name,
-        code: room.code,
-        capacity: room.capacity,
-        is_general: room.is_general,
-        floor: room.floor,
-        building: room.building,
-        facilities: room.facilities,
-        status: room.status,
-        notes: room.notes || '',
-        updatedByUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    }
-
-    for (const ev of INITIAL_EVENTS) {
-      batch.set(doc(db, 'events', ev.id), {
-        id: ev.id,
-        campusId: CAMPUS_ID,
-        nama_event: ev.nama_event,
-        tanggal: ev.tanggal,
-        jam_mulai: ev.jam_mulai,
-        jam_selesai: ev.jam_selesai,
-        jumlah_peserta: ev.jumlah_peserta,
-        pic: ev.pic,
-        nomor_hp_pic: ev.nomor_hp_pic,
-        ruangan_ids: ev.ruangan_ids,
-        status: ev.status,
-        catatan: ev.catatan || '',
-        created_by: ev.created_by,
-        ownerUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    }
-
-    for (const log of INITIAL_AUDIT_LOGS) {
-      batch.set(doc(db, 'audit_logs', log.id), {
-        id: log.id,
-        campusId: CAMPUS_ID,
-        actorUid: uid,
-        user_name: log.user_name,
-        user_role: log.user_role,
-        action: log.action,
-        target_type: log.target_type,
-        ...(log.target_id ? { target_id: log.target_id } : {}),
-        target_name: log.target_name,
-        details: log.details,
-        createdAt: serverTimestamp()
-      });
-    }
-
-    if (actor.role === 'Administrator') {
-      batch.set(doc(db, 'settings', 'campus'), {
-        campusId: CAMPUS_ID,
-        app_name: 'STEKOM CAMPUS EVENT MANAGEMENT',
-        campus_name: 'Universitas STEKOM',
-        campus_address: 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
-        campus_phone: '(024) 6723456 / 0812-3456-7890',
-        campus_website: 'https://stekom.ac.id',
-        mode: 'production_synced',
-        timezone: 'Asia/Jakarta (WIB)',
-        updatedByUid: uid,
-        updatedAt: serverTimestamp()
-      });
-    }
-
-    await batch.commit();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'seed_initial_data');
-  }
-}
-
-export async function syncFirebaseUserProfile(firebaseUser: FirebaseUser): Promise<User> {
-  const emailLower = (firebaseUser.email || '').trim().toLowerCase();
-  const userDocRef = doc(db, 'users', firebaseUser.uid);
-  const userPath = `users/${firebaseUser.uid}`;
-
-  let existingSnap;
-  try {
-    existingSnap = await getDoc(userDocRef);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, userPath);
-  }
-
-  if (existingSnap.exists()) {
-    const profile = mapUserDoc(existingSnap.id, existingSnap.data(), false);
-    await ensureSeedData(profile);
-    return profile;
-  }
-
-  const isVerified = Boolean(firebaseUser.emailVerified);
-  let assignedRole: UserRole =
-    isVerified && BOOTSTRAP_ADMIN_EMAILS.has(emailLower) ? 'Administrator' : 'Viewer';
-  let assignedName = (firebaseUser.displayName || emailLower.split('@')[0] || 'Pengguna STEKOM').trim();
-  let assignedDept =
-    isVerified && BOOTSTRAP_ADMIN_EMAILS.has(emailLower)
-      ? 'Biro Administrasi Akademik & Sarpras'
-      : 'Universitas STEKOM';
-  let assignedPhone = '';
-  let matchedInviteId: string | null = null;
-
-  if (isVerified && !BOOTSTRAP_ADMIN_EMAILS.has(emailLower) && emailLower) {
-    try {
-      const inviteSnap = await getDocs(
-        query(collection(db, 'user_invites'), where('email', '==', emailLower))
-      );
-      if (!inviteSnap.empty) {
-        const inviteDoc = inviteSnap.docs[0];
-        const inv = inviteDoc.data();
-        assignedRole = (inv.role as UserRole) || 'Operator';
-        if (inv.name) assignedName = String(inv.name);
-        if (inv.department) assignedDept = String(inv.department);
-        if (inv.phone) assignedPhone = String(inv.phone);
-        matchedInviteId = inviteDoc.id;
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'user_invites');
-    }
-  }
-
-  const newUserPayload: Record<string, any> = {
-    uid: firebaseUser.uid,
-    name: assignedName.slice(0, 150),
-    email: emailLower.slice(0, 150),
-    role: assignedRole,
-    department: assignedDept.slice(0, 150),
-    phone: assignedPhone.slice(0, 40),
-    ...(matchedInviteId ? { inviteId: matchedInviteId } : {}),
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  };
-
-  try {
-    await setDoc(userDocRef, newUserPayload);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, userPath);
-  }
-
-  if (matchedInviteId) {
-    try {
-      await deleteDoc(doc(db, 'user_invites', matchedInviteId));
-    } catch {
-      // Non-fatal if invite cleanup fails
-    }
-  }
-
-  const createdUser: User = {
-    id: firebaseUser.uid,
-    name: newUserPayload.name,
-    email: newUserPayload.email,
-    role: assignedRole,
-    department: newUserPayload.department,
-    phone: newUserPayload.phone,
-    created_at: new Date().toISOString()
-  };
-
-  await ensureSeedData(createdUser);
-  await writeAuditLog(createdUser, {
-    action: 'LOGIN',
-    target_type: 'Sistem',
-    target_id: createdUser.id,
-    target_name: 'Autentikasi Pengguna Google',
-    details: `${createdUser.name} (${createdUser.email}) mendaftar & masuk sebagai ${createdUser.role}`
-  });
-
-  return createdUser;
+export interface ServerStatusInfo {
+  status: string;
+  persistence: string;
+  mode: string;
+  eventsCount?: number;
+  roomsCount?: number;
+  usersCount?: number;
 }
 
 export const api = {
-  observeAuth(callback: (firebaseUser: FirebaseUser | null) => void): () => void {
-    return onAuthStateChanged(auth, callback);
+  async checkStatus(): Promise<ServerStatusInfo> {
+    return apiRequest<ServerStatusInfo>('/api/status', { method: 'GET' }, false);
   },
 
-  isPasswordAuthUser(): boolean {
-    return Boolean(auth.currentUser?.providerData?.some((p) => p.providerId === 'password'));
+  async restoreSession(): Promise<User | null> {
+    const token = getStoredToken();
+    if (!token) return null;
+    try {
+      const user = await apiRequest<User>('/api/auth/me', { method: 'GET' }, true);
+      setStoredSession(token, user);
+      return user;
+    } catch {
+      clearStoredSession();
+      return null;
+    }
   },
 
   async loginWithEmailPassword(emailOrUser: string, password: string): Promise<User> {
@@ -405,804 +123,147 @@ export const api = {
     if (!normalizedEmail || !password) {
       throw new Error('Email/username dan kata sandi wajib diisi.');
     }
-    try {
-      const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      const user = await syncFirebaseUserProfile(credential.user);
-      await writeAuditLog(user, {
-        action: 'LOGIN',
-        target_type: 'Sistem',
-        target_id: user.id,
-        target_name: 'Autentikasi Pengguna',
-        details: `${user.name} (${user.email}) masuk ke sistem sebagai ${user.role}`
-      });
-      return user;
-    } catch (err: any) {
-      if (err?.message?.startsWith('{')) {
-        throw err;
-      }
-      throw new Error(mapFirebaseAuthError(err, 'Gagal masuk. Periksa email dan kata sandi Anda.'));
-    }
-  },
-
-  async sendPasswordReset(emailOrUser: string): Promise<void> {
-    const normalizedEmail = normalizeLoginEmail(emailOrUser);
-    if (!normalizedEmail) {
-      throw new Error('Masukkan alamat email akun yang ingin direset kata sandinya.');
-    }
-    try {
-      await sendPasswordResetEmail(auth, normalizedEmail);
-    } catch (err: any) {
-      throw new Error(mapFirebaseAuthError(err, 'Gagal mengirim email reset kata sandi.'));
-    }
+    const result = await apiRequest<AuthResponse>(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        body: JSON.stringify({ email: normalizedEmail, password })
+      },
+      false
+    );
+    setStoredSession(result.token, result.user);
+    return result.user;
   },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    const fbUser = auth.currentUser;
-    if (!fbUser || !fbUser.email) {
-      throw new Error('Sesi pengguna tidak ditemukan.');
-    }
-    if (!fbUser.providerData.some((p) => p.providerId === 'password')) {
-      throw new Error('Akun Google mengelola kata sandinya langsung melalui pengaturan Akun Google.');
-    }
-    try {
-      const cred = EmailAuthProvider.credential(fbUser.email, currentPassword);
-      await reauthenticateWithCredential(fbUser, cred);
-      await updatePassword(fbUser, newPassword);
-    } catch (err: any) {
-      throw new Error(mapFirebaseAuthError(err, 'Kata sandi saat ini salah atau gagal memperbarui kata sandi.'));
-    }
-  },
-
-  async loginWithGoogle(): Promise<User> {
-    const credential = await signInWithPopup(auth, googleAuthProvider);
-    const user = await syncFirebaseUserProfile(credential.user);
-    await writeAuditLog(user, {
-      action: 'LOGIN',
-      target_type: 'Sistem',
-      target_id: user.id,
-      target_name: 'Autentikasi Pengguna Google',
-      details: `${user.name} (${user.email}) masuk ke sistem sebagai ${user.role}`
-    });
-    return user;
-  },
-
-  async logout(currentUser?: User | null): Promise<void> {
-    try {
-      if (currentUser && auth.currentUser) {
-        await writeAuditLog(currentUser, {
-          action: 'LOGOUT',
-          target_type: 'Sistem',
-          target_id: currentUser.id,
-          target_name: 'Autentikasi Pengguna Google',
-          details: `${currentUser.name} (${currentUser.email}) keluar dari sistem`
-        });
-      }
-    } catch {
-      // Ignore audit error during logout
-    } finally {
-      await signOut(auth);
-    }
-  },
-
-  subscribeRooms(
-    onData: (rooms: Room[]) => void,
-    onError: (err: Error) => void
-  ): () => void {
-    const q = query(collection(db, 'rooms'), where('campusId', '==', CAMPUS_ID));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const list = snapshot.docs
-          .map((d) => mapRoomDoc(d.id, d.data()))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        onData(list);
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'rooms');
-        } catch (wrapped: any) {
-          onError(wrapped);
-        }
-      }
-    );
-  },
-
-  subscribeEvents(
-    onData: (events: CampusEvent[]) => void,
-    onError: (err: Error) => void
-  ): () => void {
-    const q = query(collection(db, 'events'), where('campusId', '==', CAMPUS_ID));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const list = snapshot.docs
-          .map((d) => mapEventDoc(d.id, d.data()))
-          .sort((a, b) => `${a.tanggal} ${a.jam_mulai}`.localeCompare(`${b.tanggal} ${b.jam_mulai}`));
-        onData(list);
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'events');
-        } catch (wrapped: any) {
-          onError(wrapped);
-        }
-      }
-    );
-  },
-
-  subscribeAuditLogs(
-    onData: (logs: AuditLog[]) => void,
-    onError: (err: Error) => void
-  ): () => void {
-    const q = query(collection(db, 'audit_logs'), where('campusId', '==', CAMPUS_ID));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const list = snapshot.docs
-          .map((d) => mapAuditLogDoc(d.id, d.data()))
-          .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-        onData(list);
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'audit_logs');
-        } catch (wrapped: any) {
-          onError(wrapped);
-        }
-      }
-    );
-  },
-
-  subscribeUsers(
-    onData: (users: User[]) => void,
-    onError: (err: Error) => void
-  ): () => void {
-    let activeUsers: User[] = [];
-    let pendingInvites: User[] = [];
-
-    const emitMerged = () => {
-      const merged = [...activeUsers, ...pendingInvites].sort((a, b) =>
-        a.name.localeCompare(b.name)
-      );
-      onData(merged);
-    };
-
-    const unsubUsers = onSnapshot(
-      collection(db, 'users'),
-      (snapshot) => {
-        activeUsers = snapshot.docs.map((d) => mapUserDoc(d.id, d.data(), false));
-        emitMerged();
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'users');
-        } catch (wrapped: any) {
-          onError(wrapped);
-        }
-      }
-    );
-
-    const unsubInvites = onSnapshot(
-      collection(db, 'user_invites'),
-      (snapshot) => {
-        pendingInvites = snapshot.docs.map((d) => mapUserDoc(d.id, d.data(), true));
-        emitMerged();
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'user_invites');
-        } catch (wrapped: any) {
-          onError(wrapped);
-        }
-      }
-    );
-
-    return () => {
-      unsubUsers();
-      unsubInvites();
-    };
-  },
-
-  async createRoom(room: Partial<Room>, actor: User): Promise<Room> {
-    if (actor.role === 'Viewer') throw new Error('Akses ditolak.');
-    const uid = auth.currentUser?.uid;
-    if (!uid) throw new Error('Sesi login tidak valid.');
-
-    const roomId = room.id || makeId('room');
-    const payload = {
-      id: roomId,
-      campusId: CAMPUS_ID,
-      name: String(room.name || '').trim().slice(0, 120),
-      code: String(room.code || '').trim().slice(0, 40),
-      capacity: Math.max(0, Math.min(50000, Number(room.capacity) || 0)),
-      is_general: Boolean(room.is_general),
-      floor: String(room.floor || 'Lantai 1').slice(0, 60),
-      building: String(room.building || 'Gedung Pusat STEKOM').slice(0, 120),
-      facilities: (room.facilities || []).slice(0, 30).map(String),
-      status: room.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia',
-      notes: String(room.notes || '').slice(0, 500),
-      updatedByUid: uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      await setDoc(doc(db, 'rooms', roomId), payload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `rooms/${roomId}`);
-    }
-
-    await writeAuditLog(actor, {
-      action: 'TAMBAH',
-      target_type: 'Ruangan',
-      target_id: roomId,
-      target_name: payload.name,
-      details: `Menambahkan ruangan baru ${payload.name} (${payload.code}), kapasitas ${payload.capacity}`
-    });
-
-    return mapRoomDoc(roomId, payload);
-  },
-
-  async updateRoom(id: string, room: Partial<Room>, actor: User): Promise<Room> {
-    if (actor.role === 'Viewer') throw new Error('Akses ditolak.');
-    const uid = auth.currentUser?.uid;
-    if (!uid) throw new Error('Sesi login tidak valid.');
-
-    const roomRef = doc(db, 'rooms', id);
-    let snap;
-    try {
-      snap = await getDoc(roomRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `rooms/${id}`);
-    }
-    if (!snap.exists()) throw new Error('Ruangan tidak ditemukan');
-
-    const prev = mapRoomDoc(snap.id, snap.data());
-    const nextFields = {
-      name: room.name !== undefined ? String(room.name).trim().slice(0, 120) : prev.name,
-      code: room.code !== undefined ? String(room.code).trim().slice(0, 40) : prev.code,
-      capacity: room.capacity !== undefined ? Math.max(0, Math.min(50000, Number(room.capacity) || 0)) : prev.capacity,
-      is_general: room.is_general !== undefined ? Boolean(room.is_general) : prev.is_general,
-      floor: room.floor !== undefined ? String(room.floor).slice(0, 60) : prev.floor,
-      building: room.building !== undefined ? String(room.building).slice(0, 120) : prev.building,
-      facilities: room.facilities !== undefined ? room.facilities.slice(0, 30).map(String) : prev.facilities,
-      status: room.status !== undefined ? (room.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia') : prev.status,
-      notes: room.notes !== undefined ? String(room.notes).slice(0, 500) : prev.notes || '',
-      updatedByUid: uid,
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      await updateDoc(roomRef, nextFields);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `rooms/${id}`);
-    }
-
-    await writeAuditLog(actor, {
-      action: 'UBAH',
-      target_type: 'Ruangan',
-      target_id: id,
-      target_name: nextFields.name,
-      details: `Mengubah data ruangan ${nextFields.name}: kapasitas ${nextFields.capacity}, status ${nextFields.status}`
-    });
-
-    return { ...prev, ...nextFields };
-  },
-
-  async createEvent(
-    eventData: Partial<CampusEvent>,
-    actor: User,
-    allEvents: CampusEvent[],
-    rooms: Room[]
-  ): Promise<CampusEvent> {
-    if (actor.role === 'Viewer') throw new Error('Akses ditolak. Akun Viewer hanya dapat melihat data.');
-    const uid = auth.currentUser?.uid;
-    if (!uid) throw new Error('Sesi login tidak valid.');
-
-    if (
-      !eventData.nama_event?.trim() ||
-      !eventData.tanggal ||
-      !eventData.jam_mulai ||
-      !eventData.jam_selesai ||
-      !eventData.pic?.trim() ||
-      !eventData.nomor_hp_pic?.trim()
-    ) {
-      throw new Error('Semua field wajib diisi lengkap.');
-    }
-    if (!eventData.ruangan_ids?.length) {
-      throw new Error('Pilih minimal satu ruangan untuk event ini.');
-    }
-    if (!eventData.jumlah_peserta || Number(eventData.jumlah_peserta) <= 0) {
-      throw new Error('Jumlah peserta harus berupa bilangan positif (> 0).');
-    }
-    if (eventData.jam_selesai <= eventData.jam_mulai) {
-      throw new Error('Jam selesai harus lebih akhir daripada jam mulai.');
-    }
-
-    const status: CampusEvent['status'] = eventData.status || 'Menunggu Konfirmasi';
-    const conflictResult = checkEventConflict(
+    await apiRequest<{ success: boolean }>(
+      '/api/auth/change-password',
       {
-        tanggal: eventData.tanggal,
-        jam_mulai: eventData.jam_mulai,
-        jam_selesai: eventData.jam_selesai,
-        ruangan_ids: eventData.ruangan_ids,
-        status
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword })
       },
-      allEvents,
-      rooms
+      true
     );
-    if (status === 'Scheduled' && conflictResult.hasConflict) {
-      throw new Error(`Jadwal bentrok tidak dapat di-set ke Scheduled! ${conflictResult.conflicts[0].reason}`);
-    }
-
-    const eventId = makeId('evt');
-    const payload = {
-      id: eventId,
-      campusId: CAMPUS_ID,
-      nama_event: eventData.nama_event.trim().slice(0, 200),
-      tanggal: eventData.tanggal,
-      jam_mulai: eventData.jam_mulai,
-      jam_selesai: eventData.jam_selesai,
-      jumlah_peserta: Number(eventData.jumlah_peserta),
-      pic: eventData.pic.trim().slice(0, 120),
-      nomor_hp_pic: eventData.nomor_hp_pic.trim().slice(0, 40),
-      ruangan_ids: eventData.ruangan_ids.slice(0, 25),
-      status,
-      catatan: eventData.catatan ? eventData.catatan.trim().slice(0, 1000) : '',
-      created_by: actor.name.slice(0, 150),
-      ownerUid: uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      await setDoc(doc(db, 'events', eventId), payload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `events/${eventId}`);
-    }
-
-    await writeAuditLog(actor, {
-      action: 'TAMBAH',
-      target_type: 'Event',
-      target_id: eventId,
-      target_name: payload.nama_event,
-      details: `Membuat event "${payload.nama_event}" pada ${payload.tanggal} (${payload.jam_mulai} - ${payload.jam_selesai} WIB), status: ${payload.status}`
-    });
-
-    return mapEventDoc(eventId, payload);
   },
 
-  async updateEvent(
-    id: string,
-    eventData: Partial<CampusEvent>,
-    actor: User,
-    allEvents: CampusEvent[],
-    rooms: Room[]
-  ): Promise<CampusEvent> {
-    if (actor.role === 'Viewer') throw new Error('Akses ditolak.');
-    const eventRef = doc(db, 'events', id);
-    let snap;
-    try {
-      snap = await getDoc(eventRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `events/${id}`);
+  async logout(): Promise<void> {
+    const token = getStoredToken();
+    if (token) {
+      await apiRequest('/api/auth/logout', { method: 'POST' }, true).catch(() => undefined);
     }
-    if (!snap.exists()) throw new Error('Event tidak ditemukan');
+    clearStoredSession();
+  },
 
-    const prev = mapEventDoc(snap.id, snap.data());
-    if (prev.status === 'Dibatalkan' && actor.role !== 'Administrator') {
-      throw new Error('Event yang sudah Dibatalkan hanya dapat diubah kembali oleh Administrator.');
-    }
+  async getRooms(): Promise<Room[]> {
+    return apiRequest<Room[]>('/api/rooms', { method: 'GET' }, true);
+  },
 
-    const updatedTanggal = eventData.tanggal || prev.tanggal;
-    const updatedStart = eventData.jam_mulai || prev.jam_mulai;
-    const updatedEnd = eventData.jam_selesai || prev.jam_selesai;
-    const updatedRooms = eventData.ruangan_ids || prev.ruangan_ids;
-    const updatedStatus = eventData.status || prev.status;
-
-    if (updatedEnd <= updatedStart) {
-      throw new Error('Jam selesai harus lebih akhir daripada jam mulai.');
-    }
-
-    const conflictResult = checkEventConflict(
+  async createRoom(room: Partial<Room>): Promise<Room> {
+    return apiRequest<Room>(
+      '/api/rooms',
       {
-        id: prev.id,
-        tanggal: updatedTanggal,
-        jam_mulai: updatedStart,
-        jam_selesai: updatedEnd,
-        ruangan_ids: updatedRooms,
-        status: updatedStatus
+        method: 'POST',
+        body: JSON.stringify(room)
       },
-      allEvents,
-      rooms
+      true
     );
-    if (updatedStatus === 'Scheduled' && conflictResult.hasConflict) {
-      throw new Error(`Jadwal bentrok tidak dapat di-set ke Scheduled! ${conflictResult.conflicts[0].reason}`);
-    }
-
-    const updatePayload = {
-      nama_event: eventData.nama_event !== undefined ? eventData.nama_event.trim().slice(0, 200) : prev.nama_event,
-      tanggal: updatedTanggal,
-      jam_mulai: updatedStart,
-      jam_selesai: updatedEnd,
-      jumlah_peserta: eventData.jumlah_peserta !== undefined ? Number(eventData.jumlah_peserta) : prev.jumlah_peserta,
-      pic: eventData.pic !== undefined ? eventData.pic.trim().slice(0, 120) : prev.pic,
-      nomor_hp_pic: eventData.nomor_hp_pic !== undefined ? eventData.nomor_hp_pic.trim().slice(0, 40) : prev.nomor_hp_pic,
-      ruangan_ids: updatedRooms.slice(0, 25),
-      status: updatedStatus,
-      catatan: eventData.catatan !== undefined ? eventData.catatan.trim().slice(0, 1000) : prev.catatan,
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      await updateDoc(eventRef, updatePayload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `events/${id}`);
-    }
-
-    let action: AuditLog['action'] = 'UBAH';
-    let details = `Memperbarui event "${updatePayload.nama_event}"`;
-    if (prev.status !== updatedStatus) {
-      if (updatedStatus === 'Scheduled') {
-        action = 'KONFIRMASI';
-        details = `Menetapkan event "${updatePayload.nama_event}" menjadi Scheduled (${prev.status} -> Scheduled)`;
-      } else if (updatedStatus === 'Dibatalkan') {
-        action = 'BATALKAN';
-        details = `Membatalkan event "${updatePayload.nama_event}" (${prev.status} -> Dibatalkan)`;
-      }
-    }
-
-    await writeAuditLog(actor, {
-      action,
-      target_type: 'Event',
-      target_id: id,
-      target_name: updatePayload.nama_event,
-      details
-    });
-
-    return {
-      ...prev,
-      ...updatePayload,
-      updated_at: new Date().toISOString()
-    };
   },
 
-  async deleteEvent(id: string, actor: User, eventName?: string): Promise<void> {
-    if (actor.role === 'Viewer') throw new Error('Akses ditolak.');
-    try {
-      await deleteDoc(doc(db, 'events', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `events/${id}`);
-    }
-
-    await writeAuditLog(actor, {
-      action: 'HAPUS',
-      target_type: 'Event',
-      target_id: id,
-      target_name: eventName || id,
-      details: `Menghapus event "${eventName || id}"`
-    });
+  async updateRoom(id: string, room: Partial<Room>): Promise<Room> {
+    return apiRequest<Room>(
+      `/api/rooms/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(room)
+      },
+      true
+    );
   },
 
-  async createUser(
-    userData: Partial<User> & { password?: string },
-    actor: User
-  ): Promise<User> {
-    if (actor.role !== 'Administrator') throw new Error('Akses ditolak. Hanya Administrator.');
-    const uid = auth.currentUser?.uid;
-    if (!uid) throw new Error('Sesi login tidak valid.');
-
-    const name = String(userData.name || '').trim().slice(0, 150);
-    const email = normalizeLoginEmail(String(userData.email || '')).slice(0, 150);
-    if (!name || !email) throw new Error('Nama lengkap dan email pengguna wajib diisi.');
-
-    const role: UserRole =
-      userData.role === 'Administrator' || userData.role === 'Operator' || userData.role === 'Viewer'
-        ? userData.role
-        : 'Operator';
-    const department = String(userData.department || 'Universitas STEKOM').trim().slice(0, 150);
-    const phone = String(userData.phone || '').trim().slice(0, 40);
-    const password = userData.password !== undefined ? String(userData.password) : 'stekom123';
-
-    if (password && password.length < 6) {
-      throw new Error('Kata sandi minimal harus 6 karakter.');
-    }
-
-    // Check if an active user with this email already exists in Firestore
-    let activeSnap;
-    try {
-      activeSnap = await getDocs(query(collection(db, 'users'), where('email', '==', email)));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'users');
-    }
-
-    if (!activeSnap.empty) {
-      throw new Error(`Email "${email}" sudah terdaftar pada sistem. Gunakan tombol Edit untuk mengubah perannya.`);
-    }
-
-    // Create actual Firebase Auth Email/Password user via isolated secondary App so Admin stays logged in
-    if (password) {
-      const secondaryAppName = `stekom-user-creator-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
-      const secondaryAuth = getAuth(secondaryApp);
-      let createdUid = '';
-      try {
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-        createdUid = cred.user.uid;
-        await updateProfile(cred.user, { displayName: name }).catch(() => undefined);
-      } catch (authErr: any) {
-        await signOut(secondaryAuth).catch(() => undefined);
-        await deleteApp(secondaryApp).catch(() => undefined);
-        throw new Error(mapFirebaseAuthError(authErr, 'Gagal membuat akun autentikasi pengguna.'));
-      }
-
-      await signOut(secondaryAuth).catch(() => undefined);
-      await deleteApp(secondaryApp).catch(() => undefined);
-
-      const newUserPayload = {
-        uid: createdUid,
-        name,
-        email,
-        role,
-        department,
-        phone,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      };
-
-      try {
-        await setDoc(doc(db, 'users', createdUid), newUserPayload);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `users/${createdUid}`);
-      }
-
-      await writeAuditLog(actor, {
-        action: 'TAMBAH',
-        target_type: 'Pengguna',
-        target_id: createdUid,
-        target_name: name,
-        details: `Menambahkan akun login Email/Sandi ${name} (${email}) sebagai ${role}`
-      });
-
-      return {
-        id: createdUid,
-        name,
-        email,
-        role,
-        department,
-        phone,
-        created_at: new Date().toISOString(),
-        isPendingInvite: false
-      };
-    }
-
-    // Invite-only flow (if explicitly no password provided, for Google Sign-In)
-    let invSnap;
-    try {
-      invSnap = await getDocs(query(collection(db, 'user_invites'), where('email', '==', email)));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'user_invites');
-    }
-    if (!invSnap.empty) {
-      throw new Error(`Email "${email}" sudah terdaftar pada daftar undangan pengguna.`);
-    }
-
-    const inviteId = makeId('inv');
-    const invitePayload = {
-      id: inviteId,
-      name,
-      email,
-      role,
-      department,
-      phone,
-      createdByUid: uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      await setDoc(doc(db, 'user_invites', inviteId), invitePayload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `user_invites/${inviteId}`);
-    }
-
-    await writeAuditLog(actor, {
-      action: 'TAMBAH',
-      target_type: 'Pengguna',
-      target_id: inviteId,
-      target_name: name,
-      details: `Mendaftarkan akses Google Login untuk ${name} (${email}) sebagai ${role}`
-    });
-
-    return {
-      id: inviteId,
-      name,
-      email,
-      role,
-      department,
-      phone,
-      created_at: new Date().toISOString(),
-      isPendingInvite: true
-    };
+  async getEvents(): Promise<CampusEvent[]> {
+    return apiRequest<CampusEvent[]>('/api/events', { method: 'GET' }, true);
   },
 
-  async updateUser(
-    id: string,
-    data: Partial<User>,
-    actor: User
-  ): Promise<void> {
-    if (actor.role !== 'Administrator') throw new Error('Akses ditolak.');
-
-    const activeRef = doc(db, 'users', id);
-    let activeSnap;
-    try {
-      activeSnap = await getDoc(activeRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `users/${id}`);
-    }
-
-    if (activeSnap.exists()) {
-      const prev = mapUserDoc(activeSnap.id, activeSnap.data(), false);
-      const nextPayload = {
-        name: data.name !== undefined ? data.name.trim().slice(0, 150) : prev.name,
-        role: data.role || prev.role,
-        department: data.department !== undefined ? data.department.trim().slice(0, 150) : prev.department,
-        phone: data.phone !== undefined ? data.phone.trim().slice(0, 40) : prev.phone || '',
-        updatedAt: serverTimestamp()
-      };
-      try {
-        await updateDoc(activeRef, nextPayload);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `users/${id}`);
-      }
-      await writeAuditLog(actor, {
-        action: 'UBAH',
-        target_type: 'Pengguna',
-        target_id: id,
-        target_name: nextPayload.name,
-        details: `Mengubah data & peran pengguna ${nextPayload.name} menjadi ${nextPayload.role}`
-      });
-      return;
-    }
-
-    const inviteRef = doc(db, 'user_invites', id);
-    let inviteSnap;
-    try {
-      inviteSnap = await getDoc(inviteRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `user_invites/${id}`);
-    }
-    if (!inviteSnap.exists()) {
-      throw new Error('Pengguna tidak ditemukan.');
-    }
-
-    const prevInv = mapUserDoc(inviteSnap.id, inviteSnap.data(), true);
-    const nextInvitePayload = {
-      name: data.name !== undefined ? data.name.trim().slice(0, 150) : prevInv.name,
-      email: data.email !== undefined ? data.email.trim().toLowerCase().slice(0, 150) : prevInv.email,
-      role: data.role || prevInv.role,
-      department: data.department !== undefined ? data.department.trim().slice(0, 150) : prevInv.department,
-      phone: data.phone !== undefined ? data.phone.trim().slice(0, 40) : prevInv.phone || '',
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      await updateDoc(inviteRef, nextInvitePayload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `user_invites/${id}`);
-    }
-    await writeAuditLog(actor, {
-      action: 'UBAH',
-      target_type: 'Pengguna',
-      target_id: id,
-      target_name: nextInvitePayload.name,
-      details: `Mengubah pra-registrasi pengguna ${nextInvitePayload.name} (${nextInvitePayload.email}) menjadi ${nextInvitePayload.role}`
-    });
+  async createEvent(eventData: Partial<CampusEvent>): Promise<CampusEvent> {
+    return apiRequest<CampusEvent>(
+      '/api/events',
+      {
+        method: 'POST',
+        body: JSON.stringify(eventData)
+      },
+      true
+    );
   },
 
-  async deleteUser(id: string, actor: User, targetName?: string): Promise<void> {
-    if (actor.role !== 'Administrator') throw new Error('Akses ditolak.');
-    if (id === actor.id) throw new Error('Anda tidak dapat menghapus akun Anda sendiri.');
-
-    const activeRef = doc(db, 'users', id);
-    let activeSnap;
-    try {
-      activeSnap = await getDoc(activeRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `users/${id}`);
-    }
-
-    if (activeSnap.exists()) {
-      try {
-        await deleteDoc(activeRef);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `users/${id}`);
-      }
-    } else {
-      try {
-        await deleteDoc(doc(db, 'user_invites', id));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `user_invites/${id}`);
-      }
-    }
-
-    await writeAuditLog(actor, {
-      action: 'HAPUS',
-      target_type: 'Pengguna',
-      target_id: id,
-      target_name: targetName || id,
-      details: `Menghapus akses pengguna ${targetName || id}`
-    });
+  async updateEvent(id: string, eventData: Partial<CampusEvent>): Promise<CampusEvent> {
+    return apiRequest<CampusEvent>(
+      `/api/events/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(eventData)
+      },
+      true
+    );
   },
 
-  async resetData(actor: User): Promise<void> {
-    if (actor.role !== 'Administrator') {
-      throw new Error('Akses ditolak. Hanya Administrator yang dapat me-reset data.');
-    }
-    const uid = auth.currentUser?.uid;
-    if (!uid) throw new Error('Sesi login tidak valid.');
+  async deleteEvent(id: string): Promise<void> {
+    await apiRequest<{ success: boolean }>(
+      `/api/events/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+      true
+    );
+  },
 
-    try {
-      const [roomsSnap, eventsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'rooms'), where('campusId', '==', CAMPUS_ID))),
-        getDocs(query(collection(db, 'events'), where('campusId', '==', CAMPUS_ID)))
-      ]);
+  async getUsers(): Promise<User[]> {
+    return apiRequest<User[]>('/api/users', { method: 'GET' }, true);
+  },
 
-      const batch = writeBatch(db);
-      roomsSnap.docs.forEach((d) => batch.delete(d.ref));
-      eventsSnap.docs.forEach((d) => batch.delete(d.ref));
+  async createUser(userData: Partial<User> & { password?: string }): Promise<User> {
+    return apiRequest<User>(
+      '/api/users',
+      {
+        method: 'POST',
+        body: JSON.stringify(userData)
+      },
+      true
+    );
+  },
 
-      for (const room of INITIAL_ROOMS) {
-        batch.set(doc(db, 'rooms', room.id), {
-          id: room.id,
-          campusId: CAMPUS_ID,
-          name: room.name,
-          code: room.code,
-          capacity: room.capacity,
-          is_general: room.is_general,
-          floor: room.floor,
-          building: room.building,
-          facilities: room.facilities,
-          status: room.status,
-          notes: room.notes || '',
-          updatedByUid: uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      }
+  async updateUser(id: string, data: Partial<User> & { new_password?: string }): Promise<User> {
+    return apiRequest<User>(
+      `/api/users/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(data)
+      },
+      true
+    );
+  },
 
-      for (const ev of INITIAL_EVENTS) {
-        batch.set(doc(db, 'events', ev.id), {
-          id: ev.id,
-          campusId: CAMPUS_ID,
-          nama_event: ev.nama_event,
-          tanggal: ev.tanggal,
-          jam_mulai: ev.jam_mulai,
-          jam_selesai: ev.jam_selesai,
-          jumlah_peserta: ev.jumlah_peserta,
-          pic: ev.pic,
-          nomor_hp_pic: ev.nomor_hp_pic,
-          ruangan_ids: ev.ruangan_ids,
-          status: ev.status,
-          catatan: ev.catatan || '',
-          created_by: ev.created_by,
-          ownerUid: uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      }
+  async resetUserPassword(id: string, newPassword?: string): Promise<{ success: boolean; password: string }> {
+    return apiRequest<{ success: boolean; password: string }>(
+      `/api/users/${encodeURIComponent(id)}/reset-password`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ newPassword: newPassword || '' })
+      },
+      true
+    );
+  },
 
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'reset_data');
-    }
+  async deleteUser(id: string): Promise<void> {
+    await apiRequest<{ success: boolean }>(
+      `/api/users/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+      true
+    );
+  },
 
-    await writeAuditLog(actor, {
-      action: 'PENGATURAN',
-      target_type: 'Sistem',
-      target_id: 'sys-reset',
-      target_name: 'Database Reset',
-      details: 'Melakukan reset data ruangan dan event contoh Universitas STEKOM ke Cloud Firestore'
-    });
+  async getAuditLogs(): Promise<AuditLog[]> {
+    return apiRequest<AuditLog[]>('/api/audit-logs', { method: 'GET' }, true);
+  },
+
+  async resetData(): Promise<void> {
+    await apiRequest<{ success: boolean }>('/api/reset-data', { method: 'POST' }, true);
   }
 };

@@ -112,14 +112,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="font-medium text-[11px]">
-                  Cloud Firestore Aktif
+                  Database SQLite Aktif
                 </span>
               </button>
             ) : (
               <div className="hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#F7F5F0] border border-stone-200 text-xs text-stone-600">
                 <div className="w-2 h-2 rounded-full bg-emerald-500" />
                 <span className="font-medium text-[11px]">
-                  Sistem Cloud Aktif
+                  Database Server Aktif
                 </span>
               </div>
             )}

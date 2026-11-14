@@ -4,6 +4,7 @@ import type { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,7 +19,75 @@ const isProd =
   (process.env.npm_lifecycle_event === 'start' && fs.existsSync(distPath));
 const PORT = Number(process.env.PORT) || 3000;
 
-// Data directory and file path with safe fallback for read-only production filesystems
+export type UserRole = 'Administrator' | 'Operator' | 'Viewer';
+export type EventStatus = 'Menunggu Konfirmasi' | 'Scheduled' | 'Dibatalkan';
+export type RoomStatus = 'Tersedia' | 'Pemeliharaan';
+
+export interface DbRoom {
+  id: string;
+  name: string;
+  code: string;
+  capacity: number;
+  is_general: boolean;
+  floor: string;
+  building: string;
+  facilities: string[];
+  status: RoomStatus;
+  notes?: string;
+}
+
+export interface DbEvent {
+  id: string;
+  nama_event: string;
+  tanggal: string;
+  jam_mulai: string;
+  jam_selesai: string;
+  jumlah_peserta: number;
+  pic: string;
+  nomor_hp_pic: string;
+  ruangan_ids: string[];
+  status: EventStatus;
+  catatan: string;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+}
+
+export interface DbUser {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  department: string;
+  phone?: string;
+  created_at: string;
+  password_hash?: string;
+}
+
+export interface DbAuditLog {
+  id: string;
+  user_name: string;
+  user_role: string;
+  action: string;
+  target_type: string;
+  target_id?: string;
+  target_name: string;
+  details: string;
+  timestamp: string;
+}
+
+export interface DbSettings {
+  app_name: string;
+  campus_name: string;
+  campus_address: string;
+  campus_phone: string;
+  campus_website: string;
+  mode: string;
+  timezone: string;
+  updated_at: string;
+}
+
+// Data directory and SQLite path with safe fallback for read-only production filesystems
 function resolveDataDir(): string {
   const preferred = path.resolve(__dirname, 'data');
   try {
@@ -34,18 +103,18 @@ function resolveDataDir(): string {
         fs.mkdirSync(fallback, { recursive: true });
       }
     } catch {
-      // in-memory fallback will still work
+      // ignore
     }
     return fallback;
   }
 }
 
 const DATA_DIR = resolveDataDir();
-const DB_FILE = path.join(DATA_DIR, 'db.json');
+const DB_PATH = path.join(DATA_DIR, 'stekom.db');
+const LEGACY_JSON_FILE = path.join(DATA_DIR, 'db.json');
 
 // 21 Initial Rooms specified by Universitas STEKOM
-const INITIAL_ROOMS = [
-  // 8 Ruangan Umum (Kapasitas fleksibel/dapat diedit)
+const INITIAL_ROOMS: DbRoom[] = [
   {
     id: 'room-aula-utama',
     name: 'Aula Utama',
@@ -142,7 +211,6 @@ const INITIAL_ROOMS = [
     status: 'Tersedia',
     notes: 'Pusat riset kendaraan listrik ramah lingkungan STEKOM'
   },
-  // 13 Ruangan Kelas / Rapat dengan kapasitas spesifik
   {
     id: 'room-b-2-8',
     name: 'B.2.8',
@@ -292,8 +360,7 @@ const INITIAL_ROOMS = [
   }
 ];
 
-// Seed Users
-const INITIAL_USERS = [
+const INITIAL_USERS: DbUser[] = [
   {
     id: 'user-admin',
     name: 'Dr. Ir. Agus Wibowo, M.Kom',
@@ -323,9 +390,7 @@ const INITIAL_USERS = [
   }
 ];
 
-// Seed Events (realistic events for STEKOM)
-// Current reference date: November 2026
-const INITIAL_EVENTS = [
+const INITIAL_EVENTS: DbEvent[] = [
   {
     id: 'evt-001',
     nama_event: 'Kuliah Umum: Inovasi Artificial Intelligence & Cyber Security',
@@ -488,8 +553,7 @@ const INITIAL_EVENTS = [
   }
 ];
 
-// Seed Audit Logs
-const INITIAL_AUDIT_LOGS = [
+const INITIAL_AUDIT_LOGS: DbAuditLog[] = [
   {
     id: 'log-001',
     user_name: 'Dr. Ir. Agus Wibowo, M.Kom',
@@ -536,50 +600,14 @@ const INITIAL_AUDIT_LOGS = [
   }
 ];
 
-interface DbUser {
-  id: string;
-  name: string;
-  email: string;
-  role: 'Administrator' | 'Operator' | 'Viewer';
-  department: string;
-  phone?: string;
-  created_at: string;
-  password_hash?: string;
-}
-
-interface DbAuditLog {
-  id: string;
-  user_name: string;
-  user_role: string;
-  action: string;
-  target_type: string;
-  target_id?: string;
-  target_name: string;
-  details: string;
-  timestamp: string;
-}
-
-// Helper to read and write database
-interface DatabaseSchema {
-  rooms: typeof INITIAL_ROOMS;
-  events: typeof INITIAL_EVENTS;
-  users: DbUser[];
-  audit_logs: DbAuditLog[];
-  system_settings: {
-    app_name: string;
-    campus_name: string;
-    campus_address: string;
-    campus_phone: string;
-    campus_website: string;
-    mode: 'demo' | 'production_synced';
-    firebase_configured: boolean;
-    timezone: string;
-    updated_at: string;
-  };
+function normalizeLoginEmail(identifier: string): string {
+  const trimmed = String(identifier || '').trim().toLowerCase();
+  if (!trimmed) return '';
+  return trimmed.includes('@') ? trimmed : `${trimmed}@stekom.ac.id`;
 }
 
 function getDefaultPasswordForEmail(email: string): string {
-  const normalized = (email || '').trim().toLowerCase();
+  const normalized = normalizeLoginEmail(email);
   if (normalized === 'admin@stekom.ac.id') return 'admin123';
   if (normalized === 'operator@stekom.ac.id') return 'operator123';
   if (normalized === 'viewer@stekom.ac.id') return 'viewer123';
@@ -606,22 +634,14 @@ function verifyPassword(password: string, storedHash?: string): boolean {
   }
 }
 
-function createSeedUsers(): DbUser[] {
-  return INITIAL_USERS.map((u) => ({
-    ...u,
-    role: u.role as DbUser['role'],
-    password_hash: hashPassword(getDefaultPasswordForEmail(u.email))
-  }));
-}
-
-function sanitizeUser(user: DbUser) {
+function sanitizeUser(user: DbUser): Omit<DbUser, 'password_hash'> {
   const { password_hash: _ignored, ...safe } = user;
   return safe;
 }
 
 interface AuthTokenPayload {
   sub: string;
-  role: DbUser['role'];
+  role: UserRole;
   email: string;
   exp: number;
 }
@@ -659,6 +679,399 @@ function verifyAuthToken(token: string): AuthTokenPayload | null {
   }
 }
 
+// Initialize SQLite database
+const sqlite = new DatabaseSync(DB_PATH);
+sqlite.exec(`
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+
+  CREATE TABLE IF NOT EXISTS rooms (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL,
+    capacity INTEGER NOT NULL DEFAULT 0,
+    is_general INTEGER NOT NULL DEFAULT 0,
+    floor TEXT NOT NULL DEFAULT 'Lantai 1',
+    building TEXT NOT NULL DEFAULT 'Gedung Pusat STEKOM',
+    facilities TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'Tersedia',
+    notes TEXT NOT NULL DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    nama_event TEXT NOT NULL,
+    tanggal TEXT NOT NULL,
+    jam_mulai TEXT NOT NULL,
+    jam_selesai TEXT NOT NULL,
+    jumlah_peserta INTEGER NOT NULL DEFAULT 1,
+    pic TEXT NOT NULL,
+    nomor_hp_pic TEXT NOT NULL,
+    ruangan_ids TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'Menunggu Konfirmasi',
+    catatan TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL DEFAULT 'Operator',
+    department TEXT NOT NULL DEFAULT 'Universitas STEKOM',
+    phone TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    password_hash TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    user_name TEXT NOT NULL,
+    user_role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT,
+    target_name TEXT NOT NULL,
+    details TEXT NOT NULL,
+    timestamp TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS system_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    app_name TEXT NOT NULL,
+    campus_name TEXT NOT NULL,
+    campus_address TEXT NOT NULL,
+    campus_phone TEXT NOT NULL,
+    campus_website TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'sqlite',
+    timezone TEXT NOT NULL DEFAULT 'Asia/Jakarta (WIB)',
+    updated_at TEXT NOT NULL
+  );
+`);
+
+function safeJsonArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function mapRoomRow(row: Record<string, unknown>): DbRoom {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    code: String(row.code),
+    capacity: Number(row.capacity) || 0,
+    is_general: Boolean(row.is_general),
+    floor: String(row.floor || 'Lantai 1'),
+    building: String(row.building || 'Gedung Pusat STEKOM'),
+    facilities: safeJsonArray(row.facilities),
+    status: row.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia',
+    notes: row.notes ? String(row.notes) : ''
+  };
+}
+
+function mapEventRow(row: Record<string, unknown>): DbEvent {
+  const rawStatus = String(row.status || 'Menunggu Konfirmasi');
+  const status: EventStatus =
+    rawStatus === 'Dikonfirmasi' || rawStatus === 'Scheduled'
+      ? 'Scheduled'
+      : rawStatus === 'Dibatalkan'
+      ? 'Dibatalkan'
+      : 'Menunggu Konfirmasi';
+
+  return {
+    id: String(row.id),
+    nama_event: String(row.nama_event),
+    tanggal: String(row.tanggal),
+    jam_mulai: String(row.jam_mulai),
+    jam_selesai: String(row.jam_selesai),
+    jumlah_peserta: Number(row.jumlah_peserta) || 1,
+    pic: String(row.pic),
+    nomor_hp_pic: String(row.nomor_hp_pic),
+    ruangan_ids: safeJsonArray(row.ruangan_ids),
+    status,
+    catatan: row.catatan ? String(row.catatan) : '',
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+    created_by: String(row.created_by)
+  };
+}
+
+function mapUserRow(row: Record<string, unknown>): DbUser {
+  const rawRole = String(row.role || 'Viewer');
+  const role: UserRole =
+    rawRole === 'Administrator' || rawRole === 'Operator' || rawRole === 'Viewer'
+      ? rawRole
+      : 'Viewer';
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    email: String(row.email).toLowerCase(),
+    role,
+    department: String(row.department || 'Universitas STEKOM'),
+    phone: row.phone ? String(row.phone) : '',
+    created_at: String(row.created_at),
+    password_hash: row.password_hash ? String(row.password_hash) : undefined
+  };
+}
+
+function mapAuditRow(row: Record<string, unknown>): DbAuditLog {
+  return {
+    id: String(row.id),
+    user_name: String(row.user_name),
+    user_role: String(row.user_role),
+    action: String(row.action),
+    target_type: String(row.target_type),
+    target_id: row.target_id ? String(row.target_id) : undefined,
+    target_name: String(row.target_name),
+    details: String(row.details),
+    timestamp: String(row.timestamp)
+  };
+}
+
+function insertAuditLog(entry: Omit<DbAuditLog, 'id' | 'timestamp'> & { id?: string; timestamp?: string }) {
+  const stmt = sqlite.prepare(`
+    INSERT INTO audit_logs (id, user_name, user_role, action, target_type, target_id, target_name, details, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(
+    entry.id || `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    entry.user_name,
+    entry.user_role,
+    entry.action,
+    entry.target_type,
+    entry.target_id || null,
+    entry.target_name,
+    entry.details,
+    entry.timestamp || new Date().toISOString()
+  );
+}
+
+function seedRoomsAndEvents(rooms: DbRoom[], events: DbEvent[], logs?: DbAuditLog[]) {
+  const insertRoom = sqlite.prepare(`
+    INSERT OR REPLACE INTO rooms (id, name, code, capacity, is_general, floor, building, facilities, status, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const r of rooms) {
+    insertRoom.run(
+      r.id,
+      r.name,
+      r.code,
+      Number(r.capacity) || 0,
+      r.is_general ? 1 : 0,
+      r.floor || 'Lantai 1',
+      r.building || 'Gedung Pusat STEKOM',
+      JSON.stringify(Array.isArray(r.facilities) ? r.facilities : []),
+      r.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia',
+      r.notes || ''
+    );
+  }
+
+  const insertEvent = sqlite.prepare(`
+    INSERT OR REPLACE INTO events (id, nama_event, tanggal, jam_mulai, jam_selesai, jumlah_peserta, pic, nomor_hp_pic, ruangan_ids, status, catatan, created_at, updated_at, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const ev of events) {
+    const rawStatus = String(ev.status || 'Menunggu Konfirmasi');
+    const normalizedStatus: EventStatus =
+      rawStatus === 'Dikonfirmasi' || rawStatus === 'Scheduled'
+        ? 'Scheduled'
+        : rawStatus === 'Dibatalkan'
+        ? 'Dibatalkan'
+        : 'Menunggu Konfirmasi';
+
+    insertEvent.run(
+      ev.id,
+      ev.nama_event,
+      ev.tanggal,
+      ev.jam_mulai,
+      ev.jam_selesai,
+      Number(ev.jumlah_peserta) || 1,
+      ev.pic,
+      ev.nomor_hp_pic,
+      JSON.stringify(Array.isArray(ev.ruangan_ids) ? ev.ruangan_ids : []),
+      normalizedStatus,
+      ev.catatan || '',
+      ev.created_at || new Date().toISOString(),
+      ev.updated_at || new Date().toISOString(),
+      ev.created_by || 'Sistem'
+    );
+  }
+
+  if (logs && logs.length > 0) {
+    const insertLog = sqlite.prepare(`
+      INSERT OR REPLACE INTO audit_logs (id, user_name, user_role, action, target_type, target_id, target_name, details, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const l of logs) {
+      insertLog.run(
+        l.id,
+        l.user_name,
+        l.user_role,
+        l.action,
+        l.target_type,
+        l.target_id || null,
+        l.target_name,
+        l.details,
+        l.timestamp
+      );
+    }
+  }
+}
+
+function seedUsers(users: DbUser[]) {
+  const insertUser = sqlite.prepare(`
+    INSERT OR IGNORE INTO users (id, name, email, role, department, phone, created_at, password_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const u of users) {
+    const normalizedEmail = normalizeLoginEmail(u.email);
+    const pwHash =
+      u.password_hash && u.password_hash.includes(':')
+        ? u.password_hash
+        : hashPassword(getDefaultPasswordForEmail(normalizedEmail));
+    insertUser.run(
+      u.id,
+      u.name,
+      normalizedEmail,
+      u.role,
+      u.department || 'Universitas STEKOM',
+      u.phone || '',
+      u.created_at || new Date().toISOString(),
+      pwHash
+    );
+  }
+}
+
+function ensureDatabaseInitialized() {
+  const roomCountRow = sqlite.prepare('SELECT COUNT(*) as cnt FROM rooms').get() as { cnt: number };
+  const userCountRow = sqlite.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number };
+  const settingsRow = sqlite.prepare('SELECT id FROM system_settings WHERE id = 1').get();
+
+  let legacyData: {
+    rooms?: DbRoom[];
+    events?: DbEvent[];
+    users?: DbUser[];
+    audit_logs?: DbAuditLog[];
+    system_settings?: Partial<DbSettings>;
+  } | null = null;
+
+  if ((roomCountRow.cnt === 0 || userCountRow.cnt === 0) && fs.existsSync(LEGACY_JSON_FILE)) {
+    try {
+      legacyData = JSON.parse(fs.readFileSync(LEGACY_JSON_FILE, 'utf-8'));
+    } catch {
+      legacyData = null;
+    }
+  }
+
+  sqlite.exec('BEGIN');
+  try {
+    if (roomCountRow.cnt === 0) {
+      const roomsToSeed =
+        legacyData?.rooms && Array.isArray(legacyData.rooms) && legacyData.rooms.length > 0
+          ? legacyData.rooms
+          : INITIAL_ROOMS;
+      const eventsToSeed =
+        legacyData?.events && Array.isArray(legacyData.events)
+          ? legacyData.events
+          : INITIAL_EVENTS;
+      const logsToSeed =
+        legacyData?.audit_logs && Array.isArray(legacyData.audit_logs)
+          ? legacyData.audit_logs
+          : INITIAL_AUDIT_LOGS;
+      seedRoomsAndEvents(roomsToSeed, eventsToSeed, logsToSeed);
+    }
+
+    if (userCountRow.cnt === 0) {
+      const usersToSeed =
+        legacyData?.users && Array.isArray(legacyData.users) && legacyData.users.length > 0
+          ? legacyData.users
+          : INITIAL_USERS;
+      seedUsers(usersToSeed);
+    }
+
+    if (!settingsRow) {
+      const s = legacyData?.system_settings;
+      sqlite
+        .prepare(`
+          INSERT INTO system_settings (id, app_name, campus_name, campus_address, campus_phone, campus_website, mode, timezone, updated_at)
+          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          s?.app_name || 'STEKOM CAMPUS EVENT MANAGEMENT',
+          s?.campus_name || 'Universitas STEKOM',
+          s?.campus_address || 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
+          s?.campus_phone || '(024) 6723456 / 0812-3456-7890',
+          s?.campus_website || 'https://stekom.ac.id',
+          'sqlite',
+          s?.timezone || 'Asia/Jakarta (WIB)',
+          new Date().toISOString()
+        );
+    }
+    sqlite.exec('COMMIT');
+  } catch (err) {
+    sqlite.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+function getAllRooms(): DbRoom[] {
+  const rows = sqlite.prepare('SELECT * FROM rooms ORDER BY name ASC').all() as Array<Record<string, unknown>>;
+  return rows.map(mapRoomRow);
+}
+
+function getAllEvents(): DbEvent[] {
+  const rows = sqlite
+    .prepare('SELECT * FROM events ORDER BY tanggal ASC, jam_mulai ASC')
+    .all() as Array<Record<string, unknown>>;
+  return rows.map(mapEventRow);
+}
+
+function getAllUsers(): DbUser[] {
+  const rows = sqlite.prepare('SELECT * FROM users ORDER BY name ASC').all() as Array<Record<string, unknown>>;
+  return rows.map(mapUserRow);
+}
+
+function findUserById(id: string): DbUser | null {
+  const row = sqlite.prepare('SELECT * FROM users WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  return row ? mapUserRow(row) : null;
+}
+
+function findUserByEmailOrUsername(identifier: string): DbUser | null {
+  const rawLower = String(identifier || '').trim().toLowerCase();
+  const normalized = normalizeLoginEmail(rawLower);
+  if (!rawLower) return null;
+
+  const row = sqlite
+    .prepare('SELECT * FROM users WHERE LOWER(email) = ? OR LOWER(email) = ? LIMIT 1')
+    .get(normalized, rawLower) as Record<string, unknown> | undefined;
+
+  return row ? mapUserRow(row) : null;
+}
+
+function getSettings(): DbSettings {
+  const row = sqlite.prepare('SELECT * FROM system_settings WHERE id = 1').get() as Record<string, unknown>;
+  return {
+    app_name: String(row.app_name),
+    campus_name: String(row.campus_name),
+    campus_address: String(row.campus_address),
+    campus_phone: String(row.campus_phone),
+    campus_website: String(row.campus_website),
+    mode: String(row.mode),
+    timezone: String(row.timezone),
+    updated_at: String(row.updated_at)
+  };
+}
+
 interface AuthenticatedRequest extends Request {
   authUser?: DbUser;
 }
@@ -673,8 +1086,7 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
   if (!payload) {
     return res.status(401).json({ error: 'Sesi login tidak valid atau telah berakhir. Silakan login kembali.' });
   }
-  const db = getDatabase();
-  const user = db.users.find((u) => u.id === payload.sub);
+  const user = findUserById(payload.sub);
   if (!user) {
     return res.status(401).json({ error: 'Akun pengguna tidak ditemukan atau telah dihapus.' });
   }
@@ -682,7 +1094,7 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
   next();
 }
 
-function requireRoles(...allowedRoles: Array<DbUser['role']>) {
+function requireRoles(...allowedRoles: UserRole[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (!req.authUser) {
       return res.status(401).json({ error: 'Autentikasi diperlukan.' });
@@ -694,86 +1106,6 @@ function requireRoles(...allowedRoles: Array<DbUser['role']>) {
     }
     next();
   };
-}
-
-let memoryDb: DatabaseSchema | null = null;
-
-function getDatabase(): DatabaseSchema {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const data: DatabaseSchema = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-      let migrated = false;
-      if (!Array.isArray(data.rooms) || data.rooms.length === 0) {
-        data.rooms = INITIAL_ROOMS;
-        migrated = true;
-      }
-      if (Array.isArray(data.events)) {
-        for (const ev of data.events) {
-          if ((ev.status as string) === 'Dikonfirmasi') {
-            ev.status = 'Scheduled';
-            migrated = true;
-          }
-        }
-      } else {
-        data.events = INITIAL_EVENTS;
-        migrated = true;
-      }
-      if (Array.isArray(data.users) && data.users.length > 0) {
-        for (const u of data.users) {
-          if (!u.password_hash) {
-            u.password_hash = hashPassword(getDefaultPasswordForEmail(u.email));
-            migrated = true;
-          }
-        }
-      } else {
-        data.users = createSeedUsers();
-        migrated = true;
-      }
-      memoryDb = data;
-      if (migrated) {
-        saveDatabase(data);
-      }
-      return data;
-    }
-  } catch (err) {
-    console.error('Failed to read db.json, falling back to memory/default data:', err);
-    if (memoryDb) return memoryDb;
-  }
-
-  if (memoryDb) {
-    return memoryDb;
-  }
-
-  // Initialize fresh
-  const initialDb: DatabaseSchema = {
-    rooms: INITIAL_ROOMS,
-    events: INITIAL_EVENTS,
-    users: createSeedUsers(),
-    audit_logs: INITIAL_AUDIT_LOGS,
-    system_settings: {
-      app_name: 'STEKOM CAMPUS EVENT MANAGEMENT',
-      campus_name: 'Universitas STEKOM',
-      campus_address: 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
-      campus_phone: '(024) 6723456 / 0812-3456-7890',
-      campus_website: 'https://stekom.ac.id',
-      mode: 'demo',
-      firebase_configured: false,
-      timezone: 'Asia/Jakarta (WIB)',
-      updated_at: new Date().toISOString()
-    }
-  };
-
-  saveDatabase(initialDb);
-  return initialDb;
-}
-
-function saveDatabase(db: DatabaseSchema) {
-  memoryDb = db;
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Failed to write db.json (data retained in memory):', err);
-  }
 }
 
 // Conflict Detection Function
@@ -788,16 +1120,15 @@ function checkScheduleConflicts(
     ruangan_ids: string[];
     status?: string;
   },
-  existingEvents: typeof INITIAL_EVENTS,
-  rooms: typeof INITIAL_ROOMS
+  existingEvents: DbEvent[],
+  rooms: DbRoom[]
 ) {
-  // If target event itself is marked as 'Dibatalkan', it doesn't cause active conflicts
   if (targetEvent.status === 'Dibatalkan') {
     return { hasConflict: false, conflicts: [] };
   }
 
   const conflicts: Array<{
-    conflictingEvent: typeof INITIAL_EVENTS[0];
+    conflictingEvent: DbEvent;
     conflictingRoomIds: string[];
     conflictingRoomNames: string[];
     overlapWindow: string;
@@ -808,26 +1139,13 @@ function checkScheduleConflicts(
   const targetEnd = targetEvent.jam_selesai;
 
   for (const event of existingEvents) {
-    // Skip self
-    if (targetEvent.id && event.id === targetEvent.id) {
-      continue;
-    }
-    // Skip cancelled events! Dibatalkan tidak memblokir ruangan
-    if (event.status === 'Dibatalkan') {
-      continue;
-    }
-    // Compare dates
-    if (event.tanggal !== targetEvent.tanggal) {
-      continue;
-    }
+    if (targetEvent.id && event.id === targetEvent.id) continue;
+    if (event.status === 'Dibatalkan') continue;
+    if (event.tanggal !== targetEvent.tanggal) continue;
 
-    // Compare time window overlap: startA < endB && endA > startB
     const isTimeOverlap = targetStart < event.jam_selesai && targetEnd > event.jam_mulai;
-    if (!isTimeOverlap) {
-      continue;
-    }
+    if (!isTimeOverlap) continue;
 
-    // Check shared rooms
     const sharedRoomIds = (targetEvent.ruangan_ids || []).filter((rId) =>
       (event.ruangan_ids || []).includes(rId)
     );
@@ -858,70 +1176,65 @@ function checkScheduleConflicts(
 }
 
 async function startServer() {
+  ensureDatabaseInitialized();
+
   const app = express();
   app.use(express.json());
 
-  // Log all requests in dev
-  app.use((req, res, next) => {
+  app.use((req, _res, next) => {
     if (req.path.startsWith('/api')) {
       console.log(`[API] ${req.method} ${req.path}`);
     }
     next();
   });
 
-  // Ensure DB is initialized
-  getDatabase();
-
-  // API Endpoints:
-
   // Status & System info
-  app.get('/api/status', (req: Request, res: Response) => {
-    const db = getDatabase();
+  app.get('/api/status', (_req: Request, res: Response) => {
+    const roomsCount = (sqlite.prepare('SELECT COUNT(*) as cnt FROM rooms').get() as { cnt: number }).cnt;
+    const eventsCount = (sqlite.prepare('SELECT COUNT(*) as cnt FROM events').get() as { cnt: number }).cnt;
+    const usersCount = (sqlite.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number }).cnt;
+    const settings = getSettings();
+
     res.json({
       status: 'online',
-      appName: 'STEKOM CAMPUS EVENT MANAGEMENT',
-      campus: 'Universitas STEKOM',
-      persistence: 'File System (JSON Database)',
-      dbFilePath: DB_FILE,
-      eventsCount: db.events.length,
-      roomsCount: db.rooms.length,
-      usersCount: db.users.length,
-      mode: db.system_settings.mode,
-      firebaseConfigured: db.system_settings.firebase_configured,
-      timezone: 'Asia/Jakarta (WIB)',
+      appName: settings.app_name,
+      campus: settings.campus_name,
+      persistence: 'SQLite Database (Server Backend)',
+      dbFilePath: DB_PATH,
+      eventsCount,
+      roomsCount,
+      usersCount,
+      mode: settings.mode,
+      timezone: settings.timezone,
       timestamp: new Date().toISOString()
     });
   });
 
-  // Authentication Endpoints
+  // Authentication Endpoints (Local User & Password against SQLite — no external auth provider required)
   app.post('/api/auth/login', (req: Request, res: Response) => {
-    const db = getDatabase();
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const identifier = String(req.body?.email || req.body?.identifier || '').trim();
     const password = String(req.body?.password || '');
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email dan kata sandi wajib diisi.' });
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Email/username dan kata sandi wajib diisi.' });
     }
 
-    const user = db.users.find((u) => u.email.trim().toLowerCase() === email);
+    const user = findUserByEmailOrUsername(identifier);
     if (!user || !verifyPassword(password, user.password_hash)) {
-      return res.status(401).json({ error: 'Email atau kata sandi salah. Silakan periksa kembali.' });
+      return res.status(401).json({ error: 'Email/username atau kata sandi salah. Silakan periksa kembali.' });
     }
 
     const token = createAuthToken(user);
 
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: user.name,
       user_role: user.role,
       action: 'LOGIN',
       target_type: 'Sistem',
       target_id: user.id,
       target_name: 'Autentikasi Pengguna',
-      details: `${user.name} (${user.email}) masuk ke sistem sebagai ${user.role}`,
-      timestamp: new Date().toISOString()
+      details: `${user.name} (${user.email}) masuk ke sistem sebagai ${user.role}`
     });
-    saveDatabase(db);
 
     res.json({
       token,
@@ -930,22 +1243,16 @@ async function startServer() {
   });
 
   app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const user = req.authUser!;
-
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: user.name,
       user_role: user.role,
       action: 'LOGOUT',
       target_type: 'Sistem',
       target_id: user.id,
       target_name: 'Autentikasi Pengguna',
-      details: `${user.name} (${user.email}) keluar (logout) dari sistem`,
-      timestamp: new Date().toISOString()
+      details: `${user.name} (${user.email}) keluar (logout) dari sistem`
     });
-    saveDatabase(db);
-
     res.json({ success: true });
   });
 
@@ -954,7 +1261,6 @@ async function startServer() {
   });
 
   app.post('/api/auth/change-password', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const authUser = req.authUser!;
     const currentPassword = String(req.body?.currentPassword || '');
     const newPassword = String(req.body?.newPassword || '');
@@ -962,158 +1268,185 @@ async function startServer() {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: 'Kata sandi saat ini dan kata sandi baru wajib diisi.' });
     }
+    if (newPassword !== newPassword.trim()) {
+      return res.status(400).json({ error: 'Kata sandi baru tidak boleh diawali atau diakhiri spasi.' });
+    }
     if (newPassword.length < 6) {
       return res.status(400).json({ error: 'Kata sandi baru minimal harus 6 karakter.' });
     }
 
-    const index = db.users.findIndex((u) => u.id === authUser.id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Akun pengguna tidak ditemukan.' });
-    }
-
-    if (!verifyPassword(currentPassword, db.users[index].password_hash)) {
+    if (!verifyPassword(currentPassword, authUser.password_hash)) {
       return res.status(400).json({ error: 'Kata sandi saat ini tidak sesuai.' });
     }
 
-    db.users[index].password_hash = hashPassword(newPassword);
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    sqlite
+      .prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+      .run(hashPassword(newPassword), authUser.id);
+
+    insertAuditLog({
       user_name: authUser.name,
       user_role: authUser.role,
       action: 'UBAH',
       target_type: 'Pengguna',
       target_id: authUser.id,
       target_name: authUser.name,
-      details: `${authUser.name} memperbarui kata sandi akun pribadinya`,
-      timestamp: new Date().toISOString()
+      details: `${authUser.name} memperbarui kata sandi akun pribadinya`
     });
-    saveDatabase(db);
 
     res.json({ success: true, message: 'Kata sandi berhasil diperbarui.' });
   });
 
-  // Reset database to initial sample data (Administrator only)
+  // Reset database to initial sample data (Administrator only — keeps existing user accounts intact!)
   app.post('/api/reset-data', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const freshDb: DatabaseSchema = {
-      rooms: INITIAL_ROOMS,
-      events: INITIAL_EVENTS,
-      users: createSeedUsers(),
-      audit_logs: [
-        ...INITIAL_AUDIT_LOGS,
-        {
-          id: `log-${Date.now()}`,
-          user_name: actor.name,
-          user_role: actor.role,
-          action: 'PENGATURAN',
-          target_type: 'Sistem',
-          target_id: 'sys-reset',
-          target_name: 'Database Reset',
-          details: 'Melakukan reset data contoh awal Universitas STEKOM',
-          timestamp: new Date().toISOString()
-        }
-      ],
-      system_settings: {
-        app_name: 'STEKOM CAMPUS EVENT MANAGEMENT',
-        campus_name: 'Universitas STEKOM',
-        campus_address: 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
-        campus_phone: '(024) 6723456 / 0812-3456-7890',
-        campus_website: 'https://stekom.ac.id',
-        mode: 'demo',
-        firebase_configured: false,
-        timezone: 'Asia/Jakarta (WIB)',
-        updated_at: new Date().toISOString()
-      }
-    };
-    saveDatabase(freshDb);
+    sqlite.exec('BEGIN');
+    try {
+      sqlite.exec('DELETE FROM rooms');
+      sqlite.exec('DELETE FROM events');
+      seedRoomsAndEvents(INITIAL_ROOMS, INITIAL_EVENTS);
+      insertAuditLog({
+        user_name: actor.name,
+        user_role: actor.role,
+        action: 'PENGATURAN',
+        target_type: 'Sistem',
+        target_id: 'sys-reset',
+        target_name: 'Database Reset',
+        details: 'Melakukan reset data ruangan dan event contoh awal Universitas STEKOM'
+      });
+      sqlite.exec('COMMIT');
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      return res.status(500).json({ error: 'Gagal me-reset database SQLite.' });
+    }
     res.json({ success: true, message: 'Data contoh berhasil di-reset ulang ke kondisi awal.' });
   });
 
   // Rooms CRUD
-  app.get('/api/rooms', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    res.json(db.rooms);
+  app.get('/api/rooms', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+    res.json(getAllRooms());
   });
 
   app.post('/api/rooms', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
-    const newRoom = {
+    const name = String(req.body?.name || '').trim();
+    const code = String(req.body?.code || '').trim();
+    if (!name || !code) {
+      return res.status(400).json({ error: 'Nama ruangan dan kode ruangan wajib diisi.' });
+    }
+
+    const newRoom: DbRoom = {
       id: req.body.id || `room-${Date.now()}`,
-      name: req.body.name,
-      code: req.body.code,
-      capacity: Number(req.body.capacity) || 0,
+      name,
+      code,
+      capacity: Math.max(0, Number(req.body.capacity) || 0),
       is_general: Boolean(req.body.is_general),
-      floor: req.body.floor || 'Lantai 1',
-      building: req.body.building || 'Gedung Pusat STEKOM',
-      facilities: req.body.facilities || [],
-      status: req.body.status || 'Tersedia',
-      notes: req.body.notes || ''
+      floor: String(req.body.floor || 'Lantai 1'),
+      building: String(req.body.building || 'Gedung Pusat STEKOM'),
+      facilities: Array.isArray(req.body.facilities) ? req.body.facilities.map(String) : [],
+      status: req.body.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia',
+      notes: String(req.body.notes || '')
     };
 
-    db.rooms.push(newRoom);
+    sqlite
+      .prepare(`
+        INSERT INTO rooms (id, name, code, capacity, is_general, floor, building, facilities, status, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        newRoom.id,
+        newRoom.name,
+        newRoom.code,
+        newRoom.capacity,
+        newRoom.is_general ? 1 : 0,
+        newRoom.floor,
+        newRoom.building,
+        JSON.stringify(newRoom.facilities),
+        newRoom.status,
+        newRoom.notes || ''
+      );
 
-    // Audit log
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'TAMBAH',
       target_type: 'Ruangan',
       target_id: newRoom.id,
       target_name: newRoom.name,
-      details: `Menambahkan ruangan baru ${newRoom.name} (${newRoom.code}), kapasitas ${newRoom.capacity}`,
-      timestamp: new Date().toISOString()
+      details: `Menambahkan ruangan baru ${newRoom.name} (${newRoom.code}), kapasitas ${newRoom.capacity}`
     });
 
-    saveDatabase(db);
     res.status(201).json(newRoom);
   });
 
   app.put('/api/rooms/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
-    const index = db.rooms.findIndex((r) => r.id === req.params.id);
-    if (index === -1) {
+    const existingRow = sqlite
+      .prepare('SELECT * FROM rooms WHERE id = ?')
+      .get(req.params.id) as Record<string, unknown> | undefined;
+
+    if (!existingRow) {
       return res.status(404).json({ error: 'Ruangan tidak ditemukan' });
     }
 
-    const prevRoom = db.rooms[index];
-    const { current_user: _ignoredUser, ...roomFields } = req.body;
-    const updatedRoom = {
-      ...prevRoom,
-      ...roomFields,
-      capacity: req.body.capacity !== undefined ? Number(req.body.capacity) : prevRoom.capacity
+    const prevRoom = mapRoomRow(existingRow);
+    const updatedRoom: DbRoom = {
+      id: prevRoom.id,
+      name: req.body.name !== undefined ? String(req.body.name).trim() : prevRoom.name,
+      code: req.body.code !== undefined ? String(req.body.code).trim() : prevRoom.code,
+      capacity: req.body.capacity !== undefined ? Math.max(0, Number(req.body.capacity) || 0) : prevRoom.capacity,
+      is_general: req.body.is_general !== undefined ? Boolean(req.body.is_general) : prevRoom.is_general,
+      floor: req.body.floor !== undefined ? String(req.body.floor) : prevRoom.floor,
+      building: req.body.building !== undefined ? String(req.body.building) : prevRoom.building,
+      facilities: Array.isArray(req.body.facilities) ? req.body.facilities.map(String) : prevRoom.facilities,
+      status: req.body.status !== undefined ? (req.body.status === 'Pemeliharaan' ? 'Pemeliharaan' : 'Tersedia') : prevRoom.status,
+      notes: req.body.notes !== undefined ? String(req.body.notes) : prevRoom.notes || ''
     };
-    db.rooms[index] = updatedRoom;
 
-    // Audit log
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    sqlite
+      .prepare(`
+        UPDATE rooms
+        SET name = ?, code = ?, capacity = ?, is_general = ?, floor = ?, building = ?, facilities = ?, status = ?, notes = ?
+        WHERE id = ?
+      `)
+      .run(
+        updatedRoom.name,
+        updatedRoom.code,
+        updatedRoom.capacity,
+        updatedRoom.is_general ? 1 : 0,
+        updatedRoom.floor,
+        updatedRoom.building,
+        JSON.stringify(updatedRoom.facilities),
+        updatedRoom.status,
+        updatedRoom.notes || '',
+        updatedRoom.id
+      );
+
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'UBAH',
       target_type: 'Ruangan',
       target_id: updatedRoom.id,
       target_name: updatedRoom.name,
-      details: `Mengubah data ruangan ${updatedRoom.name}: kapasitas ${updatedRoom.capacity}, status ${updatedRoom.status}`,
-      timestamp: new Date().toISOString()
+      details: `Mengubah data ruangan ${updatedRoom.name}: kapasitas ${updatedRoom.capacity}, status ${updatedRoom.status}`
     });
 
-    saveDatabase(db);
     res.json(updatedRoom);
   });
 
   app.delete('/api/rooms/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
-    const index = db.rooms.findIndex((r) => r.id === req.params.id);
-    if (index === -1) {
+    const existingRow = sqlite
+      .prepare('SELECT * FROM rooms WHERE id = ?')
+      .get(req.params.id) as Record<string, unknown> | undefined;
+
+    if (!existingRow) {
       return res.status(404).json({ error: 'Ruangan tidak ditemukan' });
     }
 
-    // Check if room is used in future confirmed events
-    const isUsed = db.events.some(
+    const targetRoom = mapRoomRow(existingRow);
+    const events = getAllEvents();
+    const isUsed = events.some(
       (e) => e.status !== 'Dibatalkan' && (e.ruangan_ids || []).includes(req.params.id)
     );
 
@@ -1123,60 +1456,42 @@ async function startServer() {
       });
     }
 
-    const deleted = db.rooms.splice(index, 1)[0];
+    sqlite.prepare('DELETE FROM rooms WHERE id = ?').run(req.params.id);
 
-    // Audit log
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'HAPUS',
       target_type: 'Ruangan',
-      target_id: deleted.id,
-      target_name: deleted.name,
-      details: `Menghapus ruangan ${deleted.name} (${deleted.code})`,
-      timestamp: new Date().toISOString()
+      target_id: targetRoom.id,
+      target_name: targetRoom.name,
+      details: `Menghapus ruangan ${targetRoom.name} (${targetRoom.code})`
     });
 
-    saveDatabase(db);
-    res.json({ success: true, deletedRoom: deleted });
+    res.json({ success: true, deletedRoom: targetRoom });
   });
 
   // Events CRUD & Conflict Check
   app.get('/api/events', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    let events = [...db.events];
-
-    // Optional filtering query params
+    let events = getAllEvents();
     const { month, year, status, roomId, search, pic } = req.query;
 
     if (month && month !== 'all') {
-      events = events.filter((e) => {
-        const parts = e.tanggal.split('-');
-        return parts[1] === String(month).padStart(2, '0');
-      });
+      events = events.filter((e) => e.tanggal.split('-')[1] === String(month).padStart(2, '0'));
     }
-
     if (year && year !== 'all') {
-      events = events.filter((e) => {
-        const parts = e.tanggal.split('-');
-        return parts[0] === String(year);
-      });
+      events = events.filter((e) => e.tanggal.split('-')[0] === String(year));
     }
-
     if (status && status !== 'all') {
       events = events.filter((e) => e.status === status);
     }
-
     if (roomId && roomId !== 'all') {
       events = events.filter((e) => (e.ruangan_ids || []).includes(String(roomId)));
     }
-
     if (pic && typeof pic === 'string' && pic.trim() !== '') {
       const q = pic.toLowerCase();
       events = events.filter((e) => e.pic.toLowerCase().includes(q));
     }
-
     if (search && typeof search === 'string' && search.trim() !== '') {
       const q = search.toLowerCase();
       events = events.filter(
@@ -1187,32 +1502,23 @@ async function startServer() {
       );
     }
 
-    // Sort by date and start time
-    events.sort((a, b) => `${a.tanggal} ${a.jam_mulai}`.localeCompare(`${b.tanggal} ${b.jam_mulai}`));
-
     res.json(events);
   });
 
-  // Conflict checking endpoint
   app.post('/api/events/check-conflict', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const { id, tanggal, jam_mulai, jam_selesai, ruangan_ids, status } = req.body;
-
     if (!tanggal || !jam_mulai || !jam_selesai || !ruangan_ids || !ruangan_ids.length) {
       return res.json({ hasConflict: false, conflicts: [] });
     }
-
     const result = checkScheduleConflicts(
       { id, tanggal, jam_mulai, jam_selesai, ruangan_ids, status },
-      db.events,
-      db.rooms
+      getAllEvents(),
+      getAllRooms()
     );
-
     res.json(result);
   });
 
   app.post('/api/events', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
     const {
       nama_event,
@@ -1227,11 +1533,9 @@ async function startServer() {
       catatan
     } = req.body;
 
-    // Strict Validations
     if (!nama_event || !tanggal || !jam_mulai || !jam_selesai || !pic || !nomor_hp_pic) {
       return res.status(400).json({ error: 'Semua field wajib diisi lengkap.' });
     }
-
     if (!ruangan_ids || !Array.isArray(ruangan_ids) || ruangan_ids.length === 0) {
       return res.status(400).json({ error: 'Pilih minimal satu ruangan untuk event ini.' });
     }
@@ -1240,72 +1544,92 @@ async function startServer() {
     if (isNaN(participants) || participants <= 0) {
       return res.status(400).json({ error: 'Jumlah peserta harus berupa bilangan bulat positif (> 0).' });
     }
-
     if (jam_selesai <= jam_mulai) {
       return res.status(400).json({ error: 'Jam selesai harus lebih akhir daripada jam mulai.' });
     }
 
-    // Clash detection check
+    const existingEvents = getAllEvents();
+    const rooms = getAllRooms();
+    const finalStatus: EventStatus =
+      status === 'Scheduled' || status === 'Dibatalkan' ? status : 'Menunggu Konfirmasi';
+
     const conflictResult = checkScheduleConflicts(
-      { tanggal, jam_mulai, jam_selesai, ruangan_ids, status },
-      db.events,
-      db.rooms
+      { tanggal, jam_mulai, jam_selesai, ruangan_ids, status: finalStatus },
+      existingEvents,
+      rooms
     );
 
-    // Rule: "Jangan izinkan status Scheduled pada jadwal yang bentrok"
-    if (status === 'Scheduled' && conflictResult.hasConflict) {
-      const firstConflict = conflictResult.conflicts[0];
+    if (finalStatus === 'Scheduled' && conflictResult.hasConflict) {
       return res.status(409).json({
-        error: `Jadwal bentrok tidak dapat di-set ke Scheduled! ${firstConflict.reason}`,
+        error: `Jadwal bentrok tidak dapat di-set ke Scheduled! ${conflictResult.conflicts[0].reason}`,
         conflictDetails: conflictResult
       });
     }
 
-    const newEvent = {
-      id: `evt-${Date.now()}`,
-      nama_event: nama_event.trim(),
-      tanggal,
-      jam_mulai,
-      jam_selesai,
+    const now = new Date().toISOString();
+    const newEvent: DbEvent = {
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      nama_event: String(nama_event).trim(),
+      tanggal: String(tanggal),
+      jam_mulai: String(jam_mulai),
+      jam_selesai: String(jam_selesai),
       jumlah_peserta: participants,
-      pic: pic.trim(),
-      nomor_hp_pic: nomor_hp_pic.trim(),
-      ruangan_ids,
-      status: status || 'Menunggu Konfirmasi',
-      catatan: catatan ? catatan.trim() : '',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      pic: String(pic).trim(),
+      nomor_hp_pic: String(nomor_hp_pic).trim(),
+      ruangan_ids: ruangan_ids.map(String),
+      status: finalStatus,
+      catatan: catatan ? String(catatan).trim() : '',
+      created_at: now,
+      updated_at: now,
       created_by: actor.name
     };
 
-    db.events.push(newEvent);
+    sqlite
+      .prepare(`
+        INSERT INTO events (id, nama_event, tanggal, jam_mulai, jam_selesai, jumlah_peserta, pic, nomor_hp_pic, ruangan_ids, status, catatan, created_at, updated_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        newEvent.id,
+        newEvent.nama_event,
+        newEvent.tanggal,
+        newEvent.jam_mulai,
+        newEvent.jam_selesai,
+        newEvent.jumlah_peserta,
+        newEvent.pic,
+        newEvent.nomor_hp_pic,
+        JSON.stringify(newEvent.ruangan_ids),
+        newEvent.status,
+        newEvent.catatan,
+        newEvent.created_at,
+        newEvent.updated_at,
+        newEvent.created_by
+      );
 
-    // Audit log
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'TAMBAH',
       target_type: 'Event',
       target_id: newEvent.id,
       target_name: newEvent.nama_event,
-      details: `Membuat event "${newEvent.nama_event}" pada ${newEvent.tanggal} (${newEvent.jam_mulai} - ${newEvent.jam_selesai} WIB), status: ${newEvent.status}`,
-      timestamp: new Date().toISOString()
+      details: `Membuat event "${newEvent.nama_event}" pada ${newEvent.tanggal} (${newEvent.jam_mulai} - ${newEvent.jam_selesai} WIB), status: ${newEvent.status}`
     });
 
-    saveDatabase(db);
     res.status(201).json(newEvent);
   });
 
   app.put('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
-    const index = db.events.findIndex((e) => e.id === req.params.id);
-    if (index === -1) {
+    const existingRow = sqlite
+      .prepare('SELECT * FROM events WHERE id = ?')
+      .get(req.params.id) as Record<string, unknown> | undefined;
+
+    if (!existingRow) {
       return res.status(404).json({ error: 'Event tidak ditemukan' });
     }
 
-    const existingEvent = db.events[index];
+    const existingEvent = mapEventRow(existingRow);
     const {
       nama_event,
       tanggal,
@@ -1322,18 +1646,19 @@ async function startServer() {
     const updatedTanggal = tanggal || existingEvent.tanggal;
     const updatedStart = jam_mulai || existingEvent.jam_mulai;
     const updatedEnd = jam_selesai || existingEvent.jam_selesai;
-    const updatedRooms = ruangan_ids || existingEvent.ruangan_ids;
-    const updatedStatus = status || existingEvent.status;
+    const updatedRooms: string[] = Array.isArray(ruangan_ids) ? ruangan_ids.map(String) : existingEvent.ruangan_ids;
+    const updatedStatus: EventStatus =
+      status === 'Scheduled' || status === 'Dibatalkan' || status === 'Menunggu Konfirmasi'
+        ? status
+        : existingEvent.status;
 
     if (updatedEnd <= updatedStart) {
       return res.status(400).json({ error: 'Jam selesai harus lebih akhir daripada jam mulai.' });
     }
-
     if (jumlah_peserta !== undefined && Number(jumlah_peserta) <= 0) {
       return res.status(400).json({ error: 'Jumlah peserta harus berupa bilangan positif (> 0).' });
     }
 
-    // Check conflict
     const conflictResult = checkScheduleConflicts(
       {
         id: existingEvent.id,
@@ -1343,193 +1668,207 @@ async function startServer() {
         ruangan_ids: updatedRooms,
         status: updatedStatus
       },
-      db.events,
-      db.rooms
+      getAllEvents(),
+      getAllRooms()
     );
 
-    // Rule: "Jangan izinkan status Scheduled pada jadwal yang bentrok"
     if (updatedStatus === 'Scheduled' && conflictResult.hasConflict) {
-      const firstConflict = conflictResult.conflicts[0];
       return res.status(409).json({
-        error: `Jadwal bentrok tidak dapat di-set ke Scheduled! ${firstConflict.reason}`,
+        error: `Jadwal bentrok tidak dapat di-set ke Scheduled! ${conflictResult.conflicts[0].reason}`,
         conflictDetails: conflictResult
       });
     }
 
-    const prevStatus = existingEvent.status;
-    const updatedEvent = {
+    const updatedEvent: DbEvent = {
       ...existingEvent,
-      nama_event: nama_event !== undefined ? nama_event.trim() : existingEvent.nama_event,
+      nama_event: nama_event !== undefined ? String(nama_event).trim() : existingEvent.nama_event,
       tanggal: updatedTanggal,
       jam_mulai: updatedStart,
       jam_selesai: updatedEnd,
       jumlah_peserta: jumlah_peserta !== undefined ? Number(jumlah_peserta) : existingEvent.jumlah_peserta,
-      pic: pic !== undefined ? pic.trim() : existingEvent.pic,
-      nomor_hp_pic: nomor_hp_pic !== undefined ? nomor_hp_pic.trim() : existingEvent.nomor_hp_pic,
+      pic: pic !== undefined ? String(pic).trim() : existingEvent.pic,
+      nomor_hp_pic: nomor_hp_pic !== undefined ? String(nomor_hp_pic).trim() : existingEvent.nomor_hp_pic,
       ruangan_ids: updatedRooms,
       status: updatedStatus,
-      catatan: catatan !== undefined ? catatan.trim() : existingEvent.catatan,
+      catatan: catatan !== undefined ? String(catatan).trim() : existingEvent.catatan,
       updated_at: new Date().toISOString()
     };
 
-    db.events[index] = updatedEvent;
+    sqlite
+      .prepare(`
+        UPDATE events
+        SET nama_event = ?, tanggal = ?, jam_mulai = ?, jam_selesai = ?, jumlah_peserta = ?, pic = ?, nomor_hp_pic = ?, ruangan_ids = ?, status = ?, catatan = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        updatedEvent.nama_event,
+        updatedEvent.tanggal,
+        updatedEvent.jam_mulai,
+        updatedEvent.jam_selesai,
+        updatedEvent.jumlah_peserta,
+        updatedEvent.pic,
+        updatedEvent.nomor_hp_pic,
+        JSON.stringify(updatedEvent.ruangan_ids),
+        updatedEvent.status,
+        updatedEvent.catatan,
+        updatedEvent.updated_at,
+        updatedEvent.id
+      );
 
-    // Determine audit action
     let auditAction: 'UBAH' | 'KONFIRMASI' | 'BATALKAN' = 'UBAH';
     let auditDetail = `Memperbarui event "${updatedEvent.nama_event}"`;
-
-    if (prevStatus !== updatedStatus) {
+    if (existingEvent.status !== updatedStatus) {
       if (updatedStatus === 'Scheduled') {
         auditAction = 'KONFIRMASI';
-        auditDetail = `Menetapkan event "${updatedEvent.nama_event}" menjadi Scheduled (${prevStatus} -> Scheduled)`;
+        auditDetail = `Menetapkan event "${updatedEvent.nama_event}" menjadi Scheduled (${existingEvent.status} -> Scheduled)`;
       } else if (updatedStatus === 'Dibatalkan') {
         auditAction = 'BATALKAN';
-        auditDetail = `Membatalkan event "${updatedEvent.nama_event}" (${prevStatus} -> Dibatalkan)`;
+        auditDetail = `Membatalkan event "${updatedEvent.nama_event}" (${existingEvent.status} -> Dibatalkan)`;
       } else {
         auditDetail = `Mengubah status event "${updatedEvent.nama_event}" menjadi ${updatedStatus}`;
       }
     }
 
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: auditAction,
       target_type: 'Event',
       target_id: updatedEvent.id,
       target_name: updatedEvent.nama_event,
-      details: auditDetail,
-      timestamp: new Date().toISOString()
+      details: auditDetail
     });
 
-    saveDatabase(db);
     res.json(updatedEvent);
   });
 
   app.delete('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
-    const index = db.events.findIndex((e) => e.id === req.params.id);
-    if (index === -1) {
+    const existingRow = sqlite
+      .prepare('SELECT * FROM events WHERE id = ?')
+      .get(req.params.id) as Record<string, unknown> | undefined;
+
+    if (!existingRow) {
       return res.status(404).json({ error: 'Event tidak ditemukan' });
     }
 
-    const deleted = db.events.splice(index, 1)[0];
+    const deleted = mapEventRow(existingRow);
+    sqlite.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
 
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'HAPUS',
       target_type: 'Event',
       target_id: deleted.id,
       target_name: deleted.nama_event,
-      details: `Menghapus event "${deleted.nama_event}" (Tanggal: ${deleted.tanggal})`,
-      timestamp: new Date().toISOString()
+      details: `Menghapus event "${deleted.nama_event}" (Tanggal: ${deleted.tanggal})`
     });
 
-    saveDatabase(db);
     res.json({ success: true, deletedEvent: deleted });
   });
 
   // Users CRUD (Administrator only)
-  app.get('/api/users', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    res.json(db.users.map(sanitizeUser));
+  app.get('/api/users', requireAuth, requireRoles('Administrator'), (_req: AuthenticatedRequest, res: Response) => {
+    res.json(getAllUsers().map(sanitizeUser));
   });
 
   app.post('/api/users', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
     const name = String(req.body?.name || '').trim();
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = normalizeLoginEmail(String(req.body?.email || ''));
     const rawPassword = typeof req.body?.password === 'string' ? req.body.password : '';
     const hasPasswordInput = rawPassword.trim().length > 0;
 
     if (!name || !email) {
-      return res.status(400).json({ error: 'Nama dan email pengguna wajib diisi.' });
+      return res.status(400).json({ error: 'Nama dan email/username pengguna wajib diisi.' });
     }
-
     if (hasPasswordInput && rawPassword !== rawPassword.trim()) {
       return res.status(400).json({ error: 'Kata sandi tidak boleh diawali atau diakhiri spasi.' });
     }
-
     if (hasPasswordInput && rawPassword.length < 6) {
       return res.status(400).json({ error: 'Kata sandi minimal 6 karakter.' });
     }
 
     const password = hasPasswordInput ? rawPassword : 'stekom123';
-    const validRoles: Array<DbUser['role']> = ['Administrator', 'Operator', 'Viewer'];
-    const requestedRole = String(req.body?.role || 'Operator') as DbUser['role'];
-    const role: DbUser['role'] = validRoles.includes(requestedRole) ? requestedRole : 'Operator';
+    const validRoles: UserRole[] = ['Administrator', 'Operator', 'Viewer'];
+    const requestedRole = String(req.body?.role || 'Operator') as UserRole;
+    const role: UserRole = validRoles.includes(requestedRole) ? requestedRole : 'Operator';
 
-    if (db.users.some((u) => u.email.trim().toLowerCase() === email)) {
+    const existing = findUserByEmailOrUsername(email);
+    if (existing) {
       return res.status(409).json({ error: `Email "${email}" sudah terdaftar dalam sistem.` });
     }
 
     const newUser: DbUser = {
-      id: `user-${Date.now()}`,
+      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name,
       email,
       role,
-      department: String(req.body.department || 'Universitas STEKOM').trim(),
-      phone: String(req.body.phone || '').trim(),
+      department: String(req.body?.department || 'Universitas STEKOM').trim(),
+      phone: String(req.body?.phone || '').trim(),
       created_at: new Date().toISOString(),
       password_hash: hashPassword(password)
     };
 
-    db.users.push(newUser);
+    sqlite
+      .prepare(`
+        INSERT INTO users (id, name, email, role, department, phone, created_at, password_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        newUser.id,
+        newUser.name,
+        newUser.email,
+        newUser.role,
+        newUser.department,
+        newUser.phone || '',
+        newUser.created_at,
+        newUser.password_hash!
+      );
 
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'TAMBAH',
       target_type: 'Pengguna',
       target_id: newUser.id,
       target_name: newUser.name,
-      details: `Menambahkan pengguna baru: ${newUser.name} (${newUser.email}) sebagai ${newUser.role}`,
-      timestamp: new Date().toISOString()
+      details: `Menambahkan pengguna baru: ${newUser.name} (${newUser.email}) sebagai ${newUser.role}`
     });
 
-    saveDatabase(db);
     res.status(201).json(sanitizeUser(newUser));
   });
 
   app.put('/api/users/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
-    const index = db.users.findIndex((u) => u.id === req.params.id);
-    if (index === -1) {
+    const prevUser = findUserById(req.params.id);
+    if (!prevUser) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
 
-    const prevUser = db.users[index];
-    const {
-      name,
-      email,
-      role,
-      department,
-      phone,
-      new_password
-    } = req.body;
+    const { name, email, role, department, phone, new_password } = req.body;
 
+    let normalizedEmail = prevUser.email;
     if (email !== undefined) {
-      const normalizedEmail = String(email).trim().toLowerCase();
+      normalizedEmail = normalizeLoginEmail(String(email));
       if (!normalizedEmail) {
         return res.status(400).json({ error: 'Email pengguna tidak boleh kosong.' });
       }
-      if (db.users.some((u) => u.id !== prevUser.id && u.email.trim().toLowerCase() === normalizedEmail)) {
+      const duplicate = sqlite
+        .prepare('SELECT id FROM users WHERE LOWER(email) = ? AND id != ? LIMIT 1')
+        .get(normalizedEmail, prevUser.id);
+      if (duplicate) {
         return res.status(409).json({ error: `Email "${normalizedEmail}" sudah digunakan pengguna lain.` });
       }
     }
 
-    const validRoles: Array<DbUser['role']> = ['Administrator', 'Operator', 'Viewer'];
+    const validRoles: UserRole[] = ['Administrator', 'Operator', 'Viewer'];
     if (role !== undefined && !validRoles.includes(role)) {
       return res.status(400).json({ error: 'Peran pengguna tidak valid.' });
     }
 
-    let updatedHash = prevUser.password_hash;
+    let updatedHash = prevUser.password_hash!;
     let passwordChanged = false;
     if (new_password !== undefined && String(new_password).trim() !== '') {
       const pw = String(new_password);
@@ -1546,16 +1885,30 @@ async function startServer() {
     const updated: DbUser = {
       ...prevUser,
       name: name !== undefined ? String(name).trim() : prevUser.name,
-      email: email !== undefined ? String(email).trim().toLowerCase() : prevUser.email,
-      role: role !== undefined ? role : prevUser.role,
+      email: normalizedEmail,
+      role: role !== undefined ? (role as UserRole) : prevUser.role,
       department: department !== undefined ? String(department).trim() : prevUser.department,
-      phone: phone !== undefined ? String(phone).trim() : prevUser.phone,
+      phone: phone !== undefined ? String(phone).trim() : prevUser.phone || '',
       password_hash: updatedHash
     };
-    db.users[index] = updated;
 
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    sqlite
+      .prepare(`
+        UPDATE users
+        SET name = ?, email = ?, role = ?, department = ?, phone = ?, password_hash = ?
+        WHERE id = ?
+      `)
+      .run(
+        updated.name,
+        updated.email,
+        updated.role,
+        updated.department,
+        updated.phone || '',
+        updated.password_hash!,
+        updated.id
+      );
+
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'UBAH',
@@ -1564,111 +1917,99 @@ async function startServer() {
       target_name: updated.name,
       details: passwordChanged
         ? `Mengubah data / mereset kata sandi pengguna ${updated.name} (Peran: ${updated.role})`
-        : `Mengubah data pengguna ${updated.name} (Peran: ${updated.role})`,
-      timestamp: new Date().toISOString()
+        : `Mengubah data pengguna ${updated.name} (Peran: ${updated.role})`
     });
 
-    saveDatabase(db);
     res.json(sanitizeUser(updated));
   });
 
+  app.post('/api/users/:id/reset-password', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.authUser!;
+    const target = findUserById(req.params.id);
+    if (!target) {
+      return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+    }
+
+    const rawPw = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+    const hasCustom = rawPw.trim().length > 0;
+    if (hasCustom && rawPw !== rawPw.trim()) {
+      return res.status(400).json({ error: 'Kata sandi baru tidak boleh diawali atau diakhiri spasi.' });
+    }
+    if (hasCustom && rawPw.length < 6) {
+      return res.status(400).json({ error: 'Kata sandi baru minimal 6 karakter.' });
+    }
+
+    const finalPassword = hasCustom ? rawPw : 'stekom123';
+    sqlite
+      .prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+      .run(hashPassword(finalPassword), target.id);
+
+    insertAuditLog({
+      user_name: actor.name,
+      user_role: actor.role,
+      action: 'UBAH',
+      target_type: 'Pengguna',
+      target_id: target.id,
+      target_name: target.name,
+      details: `Mereset kata sandi pengguna ${target.name} (${target.email}) secara langsung`
+    });
+
+    res.json({ success: true, password: finalPassword });
+  });
+
   app.delete('/api/users/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
     const actor = req.authUser!;
     if (req.params.id === actor.id) {
       return res.status(400).json({ error: 'Anda tidak dapat menghapus akun Anda sendiri yang sedang aktif.' });
     }
-    const index = db.users.findIndex((u) => u.id === req.params.id);
-    if (index === -1) {
+
+    const deleted = findUserById(req.params.id);
+    if (!deleted) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
 
-    const deleted = db.users.splice(index, 1)[0];
+    sqlite.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
 
-    db.audit_logs.unshift({
-      id: `log-${Date.now()}`,
+    insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'HAPUS',
       target_type: 'Pengguna',
       target_id: deleted.id,
       target_name: deleted.name,
-      details: `Menghapus akses pengguna ${deleted.name} (${deleted.role})`,
-      timestamp: new Date().toISOString()
+      details: `Menghapus akses pengguna ${deleted.name} (${deleted.role})`
     });
 
-    saveDatabase(db);
     res.json({ success: true, deletedUser: sanitizeUser(deleted) });
   });
 
   // Audit Logs (Administrator & Operator)
-  app.get('/api/audit-logs', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    res.json(db.audit_logs);
+  app.get('/api/audit-logs', requireAuth, requireRoles('Administrator', 'Operator'), (_req: AuthenticatedRequest, res: Response) => {
+    const rows = sqlite
+      .prepare('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 500')
+      .all() as Array<Record<string, unknown>>;
+    res.json(rows.map(mapAuditRow));
   });
 
   // System Settings
-  app.get('/api/settings', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    res.json(db.system_settings);
-  });
-
-  app.put('/api/settings', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    db.system_settings = {
-      ...db.system_settings,
-      ...req.body,
-      updated_at: new Date().toISOString()
-    };
-    saveDatabase(db);
-    res.json(db.system_settings);
+  app.get('/api/settings', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+    res.json(getSettings());
   });
 
   // Stats calculation
-  app.get('/api/stats', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const db = getDatabase();
-    const events = db.events;
-    const rooms = db.rooms;
+  app.get('/api/stats', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+    const events = getAllEvents();
+    const rooms = getAllRooms();
+    const usersCount = (sqlite.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number }).cnt;
 
     const totalEvents = events.length;
     const scheduledEvents = events.filter((e) => e.status === 'Scheduled').length;
     const pendingEvents = events.filter((e) => e.status === 'Menunggu Konfirmasi').length;
     const cancelledEvents = events.filter((e) => e.status === 'Dibatalkan').length;
 
-    // Today in YYYY-MM-DD
     const today = new Date().toISOString().split('T')[0];
     const todayEvents = events.filter((e) => e.tanggal === today);
-
-    // Upcoming events (today and future)
     const upcomingEvents = events.filter((e) => e.tanggal >= today && e.status !== 'Dibatalkan');
-
-    // Monthly aggregation
-    const monthlyData: Record<string, { confirmed: number; pending: number; cancelled: number }> = {};
-    for (const e of events) {
-      const monthKey = e.tanggal.substring(0, 7); // YYYY-MM
-      if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = { confirmed: 0, pending: 0, cancelled: 0 };
-      }
-      if (e.status === 'Scheduled') monthlyData[monthKey].confirmed++;
-      else if (e.status === 'Menunggu Konfirmasi') monthlyData[monthKey].pending++;
-      else if (e.status === 'Dibatalkan') monthlyData[monthKey].cancelled++;
-    }
-
-    // Room usage stats
-    const roomUsageMap: Record<string, number> = {};
-    rooms.forEach((r) => (roomUsageMap[r.id] = 0));
-    events.forEach((e) => {
-      if (e.status !== 'Dibatalkan') {
-        (e.ruangan_ids || []).forEach((rId) => {
-          roomUsageMap[rId] = (roomUsageMap[rId] || 0) + 1;
-        });
-      }
-    });
-
-    const roomUsageList = rooms.map((r) => ({
-      room: r,
-      usageCount: roomUsageMap[r.id] || 0
-    })).sort((a, b) => b.usageCount - a.usageCount);
 
     res.json({
       totalEvents,
@@ -1677,13 +2018,9 @@ async function startServer() {
       pendingEvents,
       cancelledEvents,
       todayEventsCount: todayEvents.length,
-      todayEvents,
       upcomingEventsCount: upcomingEvents.length,
-      upcomingEvents: upcomingEvents.slice(0, 5),
-      monthlyData,
-      roomUsageList,
       totalRooms: rooms.length,
-      totalUsers: db.users.length
+      totalUsers: usersCount
     });
   });
 
@@ -1702,13 +2039,13 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
+    app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`STEKOM Campus Event Management server running on http://0.0.0.0:${PORT} (mode: ${isProd ? 'production' : 'development'})`);
+    console.log(`STEKOM Campus Event Management server running on http://0.0.0.0:${PORT} (SQLite: ${DB_PATH}, mode: ${isProd ? 'production' : 'development'})`);
   });
 }
 

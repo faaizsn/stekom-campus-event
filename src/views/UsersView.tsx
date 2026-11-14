@@ -3,7 +3,6 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
-  Clock,
   Copy,
   Edit3,
   Eye,
@@ -28,7 +27,7 @@ interface UsersViewProps {
   currentUser: User;
   onAddUser: (user: Partial<User> & { password?: string; usedDefaultPassword?: boolean }) => Promise<void>;
   onUpdateUser: (userId: string, data: Partial<User>) => Promise<void>;
-  onResetPassword: (email: string) => Promise<void>;
+  onResetPassword: (userId: string, newPassword?: string) => Promise<{ password: string }>;
   onDeleteUser: (id: string) => Promise<void>;
 }
 
@@ -61,16 +60,19 @@ export const UsersView: React.FC<UsersViewProps> = ({
   const [editError, setEditError] = useState<string | null>(null);
   const [editLoading, setEditLoading] = useState(false);
 
-  // Send Reset Password Email Modal
+  // Direct Password Reset Modal
   const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
 
   // Delete Confirmation Modal
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
-  // Newly created account confirmation banner
-  const [lastCreatedAccount, setLastCreatedAccount] = useState<{
+  // Newly created or reset account confirmation banner
+  const [lastAccountCreds, setLastAccountCreds] = useState<{
+    title: string;
     name: string;
     email: string;
     password: string;
@@ -79,8 +81,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
   const [copiedCreds, setCopiedCreds] = useState(false);
 
   const handleCopyCredentials = async () => {
-    if (!lastCreatedAccount) return;
-    const text = `Email: ${lastCreatedAccount.email}\nSandi: ${lastCreatedAccount.password}`;
+    if (!lastAccountCreds) return;
+    const text = `Email: ${lastAccountCreds.email}\nSandi: ${lastAccountCreds.password}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopiedCreds(true);
@@ -124,7 +126,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
         password: finalPassword,
         usedDefaultPassword: !hasPasswordInput
       });
-      setLastCreatedAccount({
+      setLastAccountCreds({
+        title: 'Akun Baru Berhasil Dibuat & Siap Digunakan untuk Login',
         name: finalName,
         email: finalEmail,
         password: finalPassword,
@@ -168,7 +171,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
       setEditLoading(true);
       await onUpdateUser(editTarget.id, {
         name: editName.trim(),
-        ...(editTarget.isPendingInvite ? { email: editEmail.trim().toLowerCase() } : {}),
+        email: normalizeLoginEmail(editEmail),
         role: editRole,
         department: editDepartment.trim(),
         phone: editPhone.trim()
@@ -181,15 +184,37 @@ export const UsersView: React.FC<UsersViewProps> = ({
     }
   };
 
-  const handleConfirmResetEmail = async () => {
+  const handleConfirmResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!resetTarget) return;
     setResetError(null);
+
+    const hasCustom = resetNewPassword.trim().length > 0;
+    if (hasCustom && resetNewPassword !== resetNewPassword.trim()) {
+      setResetError('Kata sandi baru tidak boleh diawali atau diakhiri spasi.');
+      return;
+    }
+    if (hasCustom && resetNewPassword.length < 6) {
+      setResetError('Kata sandi baru minimal 6 karakter (atau kosongkan untuk default: stekom123).');
+      return;
+    }
+
     try {
       setResetLoading(true);
-      await onResetPassword(resetTarget.email);
+      const res = await onResetPassword(resetTarget.id, hasCustom ? resetNewPassword : undefined);
+      setLastAccountCreds({
+        title: 'Kata Sandi Pengguna Berhasil Direset & Siap Digunakan',
+        name: resetTarget.name,
+        email: resetTarget.email,
+        password: res.password,
+        role: resetTarget.role
+      });
+      setCopiedCreds(false);
       setResetTarget(null);
+      setResetNewPassword('');
+      setShowResetPassword(false);
     } catch (err: any) {
-      setResetError(err.message || 'Gagal mengirim email reset kata sandi.');
+      setResetError(err.message || 'Gagal mereset kata sandi.');
     } finally {
       setResetLoading(false);
     }
@@ -266,42 +291,42 @@ export const UsersView: React.FC<UsersViewProps> = ({
         <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" strokeWidth={1.75} />
         <div className="space-y-1 text-stone-600 leading-relaxed">
           <p className="font-bold text-stone-800">
-            Informasi Pembuatan Akun Login & Hak Akses Event (Firebase Auth + Firestore)
+            Informasi Pembuatan Akun Login & Hak Akses Event (SQLite Backend)
           </p>
           <p className="text-[11px]">
             Akun baru yang dibuat tanpa mengisi kata sandi awal otomatis mendapatkan kata sandi default{' '}
             <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono font-bold text-stone-800">
               stekom123
             </code>{' '}
-            dan langsung aktif di Firebase Authentication & Cloud Firestore sehingga dapat digunakan login dari perangkat mana saja. Pilih peran{' '}
+            dan langsung aktif tersimpan di database SQLite server tanpa memerlukan konfigurasi autentikasi eksternal. Pilih peran{' '}
             <strong>Operator</strong> atau <strong>Administrator</strong> jika akun akan digunakan untuk menambah jadwal event.
           </p>
         </div>
       </div>
 
       {/* Confirmation Banner */}
-      {lastCreatedAccount && (
+      {lastAccountCreds && (
         <div className="p-4 rounded-[22px] bg-emerald-50/90 border border-emerald-200 shadow-xs space-y-3 text-xs">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1 text-emerald-950">
               <p className="font-bold">
-                Akun Baru Berhasil Dibuat & Siap Digunakan untuk Login ({lastCreatedAccount.name}):
+                {lastAccountCreds.title} ({lastAccountCreds.name}):
               </p>
               <p className="text-[11px]">
                 Email:{' '}
                 <code className="px-1.5 py-0.5 rounded bg-white border border-emerald-200 font-mono font-bold select-all">
-                  {lastCreatedAccount.email}
+                  {lastAccountCreds.email}
                 </code>{' '}
                 • Sandi:{' '}
                 <code className="px-1.5 py-0.5 rounded bg-white border border-emerald-200 font-mono font-bold select-all">
-                  {lastCreatedAccount.password}
+                  {lastAccountCreds.password}
                 </code>{' '}
-                • Peran: <strong>{lastCreatedAccount.role}</strong>
+                • Peran: <strong>{lastAccountCreds.role}</strong>
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setLastCreatedAccount(null)}
+              onClick={() => setLastAccountCreds(null)}
               className="p-1 rounded-lg text-emerald-700 hover:bg-emerald-100"
             >
               <X className="w-4 h-4" />
@@ -367,17 +392,10 @@ export const UsersView: React.FC<UsersViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4">
-                      {u.isPendingInvite ? (
-                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200/80">
-                          <Clock className="w-3 h-3" strokeWidth={1.75} />
-                          <span>Undangan Google</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/80">
-                          <CheckCircle2 className="w-3 h-3" strokeWidth={1.75} />
-                          <span>Aktif</span>
-                        </span>
-                      )}
+                      <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/80">
+                        <CheckCircle2 className="w-3 h-3" strokeWidth={1.75} />
+                        <span>Aktif</span>
+                      </span>
                     </td>
 
                     <td className="py-3.5 px-4 font-medium text-stone-700">
@@ -403,19 +421,19 @@ export const UsersView: React.FC<UsersViewProps> = ({
                           <span>Edit</span>
                         </button>
 
-                        {!u.isPendingInvite && (
-                          <button
-                            onClick={() => {
-                              setResetTarget(u);
-                              setResetError(null);
-                            }}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-blue-700 bg-blue-50/80 hover:bg-blue-100 border border-blue-200/70 transition"
-                            title="Kirim Email Reset Kata Sandi"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" strokeWidth={1.75} />
-                            <span>Reset Sandi</span>
-                          </button>
-                        )}
+                        <button
+                          onClick={() => {
+                            setResetTarget(u);
+                            setResetNewPassword('');
+                            setShowResetPassword(false);
+                            setResetError(null);
+                          }}
+                          className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-blue-700 bg-blue-50/80 hover:bg-blue-100 border border-blue-200/70 transition"
+                          title="Reset Kata Sandi Pengguna"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          <span>Reset Sandi</span>
+                        </button>
 
                         {!isSelf ? (
                           <button
@@ -610,20 +628,14 @@ export const UsersView: React.FC<UsersViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-stone-700 mb-1">Email Login</label>
+                <label className="block font-bold text-stone-700 mb-1">Email / Username Login</label>
                 <input
-                  type="email"
+                  type="text"
                   required
-                  disabled={!editTarget.isPendingInvite}
                   value={editEmail}
                   onChange={(e) => setEditEmail(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 disabled:opacity-60"
+                  className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
                 />
-                {!editTarget.isPendingInvite && (
-                  <p className="text-[10px] text-stone-400 mt-1">
-                    Email akun aktif terikat dengan identitas Firebase Auth.
-                  </p>
-                )}
               </div>
 
               <div>
@@ -686,14 +698,14 @@ export const UsersView: React.FC<UsersViewProps> = ({
         </div>
       )}
 
-      {/* Send Password Reset Email Modal */}
+      {/* Direct Reset Password Modal */}
       {resetTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
           <div className="bg-[#FCFBF8] rounded-[26px] shadow-2xl max-w-sm w-full p-6 border border-stone-200/90 animate-in fade-in zoom-in-95 text-xs space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-stone-200/80">
               <div className="flex items-center space-x-2">
                 <KeyRound className="w-4 h-4 text-blue-700" strokeWidth={1.75} />
-                <h3 className="text-sm font-extrabold text-stone-900">Kirim Link Reset Sandi?</h3>
+                <h3 className="text-sm font-extrabold text-stone-900">Reset Kata Sandi Pengguna</h3>
               </div>
               <button
                 onClick={() => setResetTarget(null)}
@@ -708,34 +720,56 @@ export const UsersView: React.FC<UsersViewProps> = ({
               <p className="text-[11px] text-stone-500">{resetTarget.email}</p>
             </div>
 
-            {resetError && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
-                {resetError}
+            <form onSubmit={handleConfirmResetPassword} className="space-y-4">
+              {resetError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
+                  {resetError}
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">
+                  Kata Sandi Baru <span className="text-stone-400 font-normal">(opsional)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResetPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    placeholder="Kosongkan untuk reset ke: stekom123"
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    className="w-full pl-3.5 pr-10 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-stone-400 hover:text-stone-700"
+                  >
+                    {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-stone-500 mt-1.5 leading-relaxed">
+                  Kata sandi langsung diperbarui di database SQLite dan dapat segera digunakan untuk login.
+                </p>
               </div>
-            )}
 
-            <p className="text-stone-600 leading-relaxed">
-              Firebase Authentication akan mengirimkan tautan resmi pengaturan ulang kata sandi ke alamat email{' '}
-              <strong>{resetTarget.email}</strong>.
-            </p>
-
-            <div className="pt-2 flex items-center justify-end space-x-2">
-              <button
-                type="button"
-                onClick={() => setResetTarget(null)}
-                className="px-3.5 py-2 font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                disabled={resetLoading}
-                onClick={handleConfirmResetEmail}
-                className="px-4 py-2 font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl shadow-xs transition disabled:opacity-60"
-              >
-                {resetLoading ? 'Mengirim...' : 'Kirim Email Reset'}
-              </button>
-            </div>
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setResetTarget(null)}
+                  className="px-3.5 py-2 font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="px-4 py-2 font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl shadow-xs transition disabled:opacity-60"
+                >
+                  {resetLoading ? 'Menyimpan...' : 'Simpan Sandi Baru'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
