@@ -5,6 +5,7 @@ import {
   RefreshCw,
   X
 } from 'lucide-react';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { EventDetailModal } from './components/EventDetailModal';
 import { EventFormModal } from './components/EventFormModal';
 import { LoginView } from './components/LoginView';
@@ -148,6 +149,7 @@ function AppContent() {
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [monthlyRecapOpen, setMonthlyRecapOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [recapMonth, setRecapMonth] = useState('11');
   const [recapYear, setRecapYear] = useState('2026');
   const [selectedEvent, setSelectedEvent] = useState<CampusEvent | null>(null);
@@ -303,6 +305,7 @@ function AppContent() {
     setAuditLogs([]);
     setActiveTab('dashboard');
     setMobileMenuOpen(false);
+    setChangePasswordOpen(false);
     showToast('success', 'Anda telah keluar (logout) dari sistem.');
   };
 
@@ -420,14 +423,18 @@ function AppContent() {
     }
   };
 
-  // User Management Actions (Google Auth Role Invitations & Updates)
-  const handleAddUser = async (newUserData: Partial<User>) => {
+  // User Management Actions (Email/Password + Google RBAC)
+  const handleAddUser = async (
+    newUserData: Partial<User> & { password?: string; usedDefaultPassword?: boolean }
+  ) => {
     if (!currentUser) return;
     try {
-      const user = await api.createUser(newUserData, currentUser);
+      const { usedDefaultPassword, ...payload } = newUserData;
+      const user = await api.createUser(payload, currentUser);
+      const passInfo = usedDefaultPassword ? 'default: stekom123' : 'sesuai kata sandi yang diisi';
       showToast(
         'success',
-        `Akses "${user.name}" (${user.role}) tersimpan untuk email Google ${user.email}.`
+        `Akun "${user.name}" (${user.role}) siap digunakan untuk login (${user.email}, sandi ${passInfo}).`
       );
     } catch (err: any) {
       showToast('error', formatReadableError(err, 'Gagal menambahkan pengguna'));
@@ -442,6 +449,17 @@ function AppContent() {
       showToast('success', 'Data & peran pengguna berhasil diperbarui.');
     } catch (err: any) {
       showToast('error', formatReadableError(err, 'Gagal memperbarui data pengguna'));
+      throw err;
+    }
+  };
+
+  const handleResetUserPassword = async (email: string) => {
+    if (!currentUser) return;
+    try {
+      await api.sendPasswordReset(email);
+      showToast('success', `Link reset kata sandi telah dikirim ke ${email}.`);
+    } catch (err: any) {
+      showToast('error', formatReadableError(err, 'Gagal mengirim email reset kata sandi'));
       throw err;
     }
   };
@@ -508,6 +526,7 @@ function AppContent() {
   }
 
   const pendingEventsCount = events.filter((e) => e.status === 'Menunggu Konfirmasi').length;
+  const isPasswordUser = api.isPasswordAuthUser();
 
   return (
     <div className="min-h-screen bg-[#f6f4ef] text-stone-800 flex flex-col font-sans antialiased selection:bg-blue-700 selection:text-white">
@@ -518,6 +537,7 @@ function AppContent() {
         setMobileMenuOpen={setMobileMenuOpen}
         serverStatus={serverStatus}
         onOpenSettings={() => setActiveTab('settings')}
+        onOpenChangePassword={isPasswordUser ? () => setChangePasswordOpen(true) : undefined}
         onLogout={handleLogout}
       />
 
@@ -536,6 +556,7 @@ function AppContent() {
             totalRooms: rooms.length
           }}
           onOpenMonthlyRecap={() => handleOpenMonthlyRecap()}
+          onOpenChangePassword={isPasswordUser ? () => setChangePasswordOpen(true) : undefined}
           onLogout={handleLogout}
         />
 
@@ -631,6 +652,7 @@ function AppContent() {
                   currentUser={currentUser}
                   onAddUser={handleAddUser}
                   onUpdateUser={handleUpdateUser}
+                  onResetPassword={handleResetUserPassword}
                   onDeleteUser={handleDeleteUser}
                 />
               )}
@@ -685,6 +707,14 @@ function AppContent() {
         currentUser={currentUser}
         initialMonth={recapMonth}
         initialYear={recapYear}
+      />
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        userEmail={currentUser.email}
+        onSuccessToast={(msg) => showToast('success', msg)}
       />
 
       {/* Floating Toast Notification */}

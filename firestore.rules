@@ -24,6 +24,15 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    function isPasswordAuth() {
+      return isSignedIn()
+        && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+
+    function isActiveAccount() {
+      return isVerifiedEmail() || isPasswordAuth();
+    }
+
     function authEmail() {
       return request.auth.token.email.lower();
     }
@@ -50,18 +59,18 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAdminBootstrapEmail() || (isVerifiedEmail() && getUserRole() == 'Administrator');
+      return isAdminBootstrapEmail() || (isActiveAccount() && getUserRole() == 'Administrator');
     }
 
     function isOperatorOrAdmin() {
-      return isAdmin() || (isVerifiedEmail() && getUserRole() == 'Operator');
+      return isAdmin() || (isActiveAccount() && getUserRole() == 'Operator');
     }
 
     function hasValidInvite(inviteId, targetRole) {
       return inviteId is string
         && isValidId(inviteId)
         && exists(/databases/$(database)/documents/user_invites/$(inviteId))
-        && get(/databases/$(database)/documents/user_invites/$(inviteId)).data.email.lower() == authEmail()
+        && get(/databases/$(database)/documents/user_invites/$(inviteId)).data.email == authEmail()
         && get(/databases/$(database)/documents/user_invites/$(inviteId)).data.role == targetRole;
     }
 
@@ -69,10 +78,9 @@ service cloud.firestore {
     function isValidUserCreate(data, userId) {
       return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'department', 'phone', 'inviteId', 'createdAt', 'updatedAt'])
-        && data.uid is string && data.uid == userId && data.uid == request.auth.uid
+        && data.uid is string && data.uid == userId
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
-        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
-        && data.email.lower() == authEmail()
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150 && data.email == data.email.lower()
         && isValidRole(data.role)
         && (!('department' in data) || (data.department is string && data.department.size() <= 150))
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
@@ -99,7 +107,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['id', 'name', 'email', 'role', 'department', 'phone', 'createdByUid', 'createdAt', 'updatedAt'])
         && data.id is string && data.id == inviteId
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
-        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150 && data.email == data.email.lower()
         && isValidRole(data.role)
         && (!('department' in data) || (data.department is string && data.department.size() <= 150))
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
@@ -115,7 +123,7 @@ service cloud.firestore {
         && data.createdByUid == prev.createdByUid
         && data.createdAt == prev.createdAt
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
-        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150 && data.email == data.email.lower()
         && isValidRole(data.role)
         && (!('department' in data) || (data.department is string && data.department.size() <= 150))
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
@@ -243,58 +251,65 @@ service cloud.firestore {
 
     // Users collection (PII protected)
     match /users/{userId} {
-      allow get: if isVerifiedEmail() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
-      allow list: if isVerifiedEmail() && (resource.data.uid == request.auth.uid || isAdminBootstrapEmail() || isAdmin());
-      allow create: if isVerifiedEmail()
+      allow get: if isActiveAccount() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isActiveAccount() && (resource.data.uid == request.auth.uid || isAdminBootstrapEmail() || isAdmin());
+      allow create: if isActiveAccount()
         && isValidId(userId)
         && isValidUserCreate(incoming(), userId)
         && (
           isAdmin()
-          || incoming().role == 'Viewer'
-          || ('inviteId' in incoming() && hasValidInvite(incoming().inviteId, incoming().role))
+          || (
+            incoming().uid == request.auth.uid
+            && isVerifiedEmail()
+            && incoming().email == authEmail()
+            && (
+              incoming().role == 'Viewer'
+              || ('inviteId' in incoming() && hasValidInvite(incoming().inviteId, incoming().role))
+            )
+          )
         );
-      allow update: if isVerifiedEmail()
+      allow update: if isActiveAccount()
         && isValidId(userId)
         && isValidUserUpdate(incoming(), existing())
         && (
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role', 'department', 'phone', 'updatedAt']))
           || (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'phone', 'updatedAt']))
         );
-      allow delete: if isVerifiedEmail() && isValidId(userId) && isAdmin() && request.auth.uid != userId;
+      allow delete: if isActiveAccount() && isValidId(userId) && isAdmin() && request.auth.uid != userId;
     }
 
     // Pre-approved user role invites (PII protected)
     match /user_invites/{inviteId} {
-      allow get: if isVerifiedEmail() && isValidId(inviteId) && (isAdmin() || existing().email.lower() == authEmail());
-      allow list: if isVerifiedEmail() && (resource.data.email.lower() == authEmail() || isAdminBootstrapEmail() || isAdmin());
-      allow create: if isVerifiedEmail() && isValidId(inviteId) && isValidInviteCreate(incoming(), inviteId) && isAdmin();
-      allow update: if isVerifiedEmail()
+      allow get: if isActiveAccount() && isValidId(inviteId) && (isAdmin() || (isVerifiedEmail() && existing().email == authEmail()));
+      allow list: if isActiveAccount() && ((isVerifiedEmail() && resource.data.email == authEmail()) || isAdminBootstrapEmail() || isAdmin());
+      allow create: if isActiveAccount() && isValidId(inviteId) && isValidInviteCreate(incoming(), inviteId) && isAdmin();
+      allow update: if isActiveAccount()
         && isValidId(inviteId)
         && isValidInviteUpdate(incoming(), existing())
         && isAdmin()
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'role', 'department', 'phone', 'updatedAt']);
-      allow delete: if isVerifiedEmail() && isValidId(inviteId) && (isAdmin() || existing().email.lower() == authEmail());
+      allow delete: if isActiveAccount() && isValidId(inviteId) && (isAdmin() || (isVerifiedEmail() && existing().email == authEmail()));
     }
 
     // Rooms collection
     match /rooms/{roomId} {
-      allow get: if isVerifiedEmail() && isValidId(roomId);
-      allow list: if isVerifiedEmail() && resource.data.campusId == 'stekom';
-      allow create: if isVerifiedEmail() && isValidId(roomId) && isValidRoomCreate(incoming(), roomId) && isOperatorOrAdmin();
-      allow update: if isVerifiedEmail()
+      allow get: if isActiveAccount() && isValidId(roomId);
+      allow list: if isActiveAccount() && resource.data.campusId == 'stekom';
+      allow create: if isActiveAccount() && isValidId(roomId) && isValidRoomCreate(incoming(), roomId) && isOperatorOrAdmin();
+      allow update: if isActiveAccount()
         && isValidId(roomId)
         && isValidRoomUpdate(incoming(), existing())
         && isOperatorOrAdmin()
         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'capacity', 'is_general', 'floor', 'building', 'facilities', 'status', 'notes', 'updatedByUid', 'updatedAt']);
-      allow delete: if isVerifiedEmail() && isValidId(roomId) && isAdmin();
+      allow delete: if isActiveAccount() && isValidId(roomId) && isAdmin();
     }
 
     // Events collection
     match /events/{eventId} {
-      allow get: if isVerifiedEmail() && isValidId(eventId);
-      allow list: if isVerifiedEmail() && resource.data.campusId == 'stekom';
-      allow create: if isVerifiedEmail() && isValidId(eventId) && isValidEventCreate(incoming(), eventId) && isOperatorOrAdmin();
-      allow update: if isVerifiedEmail()
+      allow get: if isActiveAccount() && isValidId(eventId);
+      allow list: if isActiveAccount() && resource.data.campusId == 'stekom';
+      allow create: if isActiveAccount() && isValidId(eventId) && isValidEventCreate(incoming(), eventId) && isOperatorOrAdmin();
+      allow update: if isActiveAccount()
         && isValidId(eventId)
         && isValidEventUpdate(incoming(), existing())
         && isOperatorOrAdmin()
@@ -308,23 +323,23 @@ service cloud.firestore {
             )
           )
         );
-      allow delete: if isVerifiedEmail() && isValidId(eventId) && isOperatorOrAdmin();
+      allow delete: if isActiveAccount() && isValidId(eventId) && isOperatorOrAdmin();
     }
 
     // Immutable Audit Logs
     match /audit_logs/{logId} {
-      allow get: if isVerifiedEmail() && isValidId(logId) && (existing().actorUid == request.auth.uid || isOperatorOrAdmin());
-      allow list: if isVerifiedEmail() && (resource.data.campusId == 'stekom' || resource.data.actorUid == request.auth.uid);
-      allow create: if isVerifiedEmail() && isValidId(logId) && isValidAuditLogCreate(incoming(), logId);
+      allow get: if isActiveAccount() && isValidId(logId) && (existing().actorUid == request.auth.uid || isOperatorOrAdmin());
+      allow list: if isActiveAccount() && (resource.data.campusId == 'stekom' || resource.data.actorUid == request.auth.uid);
+      allow create: if isActiveAccount() && isValidId(logId) && isValidAuditLogCreate(incoming(), logId);
       allow update, delete: if false;
     }
 
     // System Settings
     match /settings/{settingId} {
-      allow get: if isVerifiedEmail() && isValidId(settingId) && settingId == 'campus';
+      allow get: if isActiveAccount() && isValidId(settingId) && settingId == 'campus';
       allow list: if false;
-      allow create: if isVerifiedEmail() && isValidId(settingId) && settingId == 'campus' && isValidSettings(incoming()) && isAdmin();
-      allow update: if isVerifiedEmail()
+      allow create: if isActiveAccount() && isValidId(settingId) && settingId == 'campus' && isValidSettings(incoming()) && isAdmin();
+      allow update: if isActiveAccount()
         && isValidId(settingId)
         && settingId == 'campus'
         && isValidSettings(incoming())

@@ -101,7 +101,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
           <div className="p-3 rounded-xl bg-[#F7F5F0] border border-stone-200/60">
             <span className="text-stone-500 text-[11px]">Keamanan Autentikasi:</span>
-            <p className="font-extrabold text-emerald-700 text-sm mt-0.5">Firebase Auth (Google)</p>
+            <p className="font-extrabold text-emerald-700 text-sm mt-0.5">Firebase Auth (User/Sandi & Google)</p>
           </div>
         </div>
       </div>

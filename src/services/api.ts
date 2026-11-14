@@ -1,8 +1,17 @@
+import { deleteApp, initializeApp } from 'firebase/app';
 import {
+  EmailAuthProvider,
   User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  getAuth,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
-  signOut
+  signOut,
+  updatePassword,
+  updateProfile
 } from 'firebase/auth';
 import {
   Timestamp,
@@ -19,6 +28,7 @@ import {
   where,
   writeBatch
 } from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
   OperationType,
   auth,
@@ -39,6 +49,45 @@ import { INITIAL_AUDIT_LOGS, INITIAL_EVENTS, INITIAL_ROOMS } from './seedData';
 
 const CAMPUS_ID = 'stekom';
 const BOOTSTRAP_ADMIN_EMAILS = new Set(['mumahadfaiz@stekom.ac.id', 'admin@stekom.ac.id']);
+
+export function normalizeLoginEmail(identifier: string): string {
+  const trimmed = String(identifier || '').trim().toLowerCase();
+  if (!trimmed) return '';
+  return trimmed.includes('@') ? trimmed : `${trimmed}@stekom.ac.id`;
+}
+
+function mapFirebaseAuthError(err: any, fallback: string): string {
+  const code = err?.code || '';
+  if (
+    code === 'auth/invalid-credential' ||
+    code === 'auth/wrong-password' ||
+    code === 'auth/user-not-found'
+  ) {
+    return 'Email/username atau kata sandi salah. Silakan periksa kembali.';
+  }
+  if (code === 'auth/invalid-email') {
+    return 'Format email tidak valid. Gunakan format email yang benar (misal: nama@stekom.ac.id).';
+  }
+  if (code === 'auth/user-disabled') {
+    return 'Akun ini sedang dinonaktifkan oleh Administrator.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Terlalu banyak percobaan login gagal. Tunggu beberapa saat lalu coba lagi.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Provider Email/Password belum diaktifkan di Firebase Console. Aktifkan di Firebase Console > Authentication > Sign-in method > Email/Password.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'Email ini sudah terdaftar pada Firebase Authentication.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Kata sandi terlalu lemah. Minimal harus terdiri dari 6 karakter.';
+  }
+  if (code === 'auth/requires-recent-login') {
+    return 'Demi keamanan, silakan keluar (logout) lalu masuk kembali sebelum mengubah kata sandi.';
+  }
+  return err?.message || fallback;
+}
 
 function toIsoString(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -264,15 +313,18 @@ export async function syncFirebaseUserProfile(firebaseUser: FirebaseUser): Promi
     return profile;
   }
 
-  let assignedRole: UserRole = BOOTSTRAP_ADMIN_EMAILS.has(emailLower) ? 'Administrator' : 'Viewer';
+  const isVerified = Boolean(firebaseUser.emailVerified);
+  let assignedRole: UserRole =
+    isVerified && BOOTSTRAP_ADMIN_EMAILS.has(emailLower) ? 'Administrator' : 'Viewer';
   let assignedName = (firebaseUser.displayName || emailLower.split('@')[0] || 'Pengguna STEKOM').trim();
-  let assignedDept = BOOTSTRAP_ADMIN_EMAILS.has(emailLower)
-    ? 'Biro Administrasi Akademik & Sarpras'
-    : 'Universitas STEKOM';
+  let assignedDept =
+    isVerified && BOOTSTRAP_ADMIN_EMAILS.has(emailLower)
+      ? 'Biro Administrasi Akademik & Sarpras'
+      : 'Universitas STEKOM';
   let assignedPhone = '';
   let matchedInviteId: string | null = null;
 
-  if (!BOOTSTRAP_ADMIN_EMAILS.has(emailLower) && emailLower) {
+  if (isVerified && !BOOTSTRAP_ADMIN_EMAILS.has(emailLower) && emailLower) {
     try {
       const inviteSnap = await getDocs(
         query(collection(db, 'user_invites'), where('email', '==', emailLower))
@@ -342,6 +394,63 @@ export async function syncFirebaseUserProfile(firebaseUser: FirebaseUser): Promi
 export const api = {
   observeAuth(callback: (firebaseUser: FirebaseUser | null) => void): () => void {
     return onAuthStateChanged(auth, callback);
+  },
+
+  isPasswordAuthUser(): boolean {
+    return Boolean(auth.currentUser?.providerData?.some((p) => p.providerId === 'password'));
+  },
+
+  async loginWithEmailPassword(emailOrUser: string, password: string): Promise<User> {
+    const normalizedEmail = normalizeLoginEmail(emailOrUser);
+    if (!normalizedEmail || !password) {
+      throw new Error('Email/username dan kata sandi wajib diisi.');
+    }
+    try {
+      const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      const user = await syncFirebaseUserProfile(credential.user);
+      await writeAuditLog(user, {
+        action: 'LOGIN',
+        target_type: 'Sistem',
+        target_id: user.id,
+        target_name: 'Autentikasi Pengguna',
+        details: `${user.name} (${user.email}) masuk ke sistem sebagai ${user.role}`
+      });
+      return user;
+    } catch (err: any) {
+      if (err?.message?.startsWith('{')) {
+        throw err;
+      }
+      throw new Error(mapFirebaseAuthError(err, 'Gagal masuk. Periksa email dan kata sandi Anda.'));
+    }
+  },
+
+  async sendPasswordReset(emailOrUser: string): Promise<void> {
+    const normalizedEmail = normalizeLoginEmail(emailOrUser);
+    if (!normalizedEmail) {
+      throw new Error('Masukkan alamat email akun yang ingin direset kata sandinya.');
+    }
+    try {
+      await sendPasswordResetEmail(auth, normalizedEmail);
+    } catch (err: any) {
+      throw new Error(mapFirebaseAuthError(err, 'Gagal mengirim email reset kata sandi.'));
+    }
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const fbUser = auth.currentUser;
+    if (!fbUser || !fbUser.email) {
+      throw new Error('Sesi pengguna tidak ditemukan.');
+    }
+    if (!fbUser.providerData.some((p) => p.providerId === 'password')) {
+      throw new Error('Akun Google mengelola kata sandinya langsung melalui pengaturan Akun Google.');
+    }
+    try {
+      const cred = EmailAuthProvider.credential(fbUser.email, currentPassword);
+      await reauthenticateWithCredential(fbUser, cred);
+      await updatePassword(fbUser, newPassword);
+    } catch (err: any) {
+      throw new Error(mapFirebaseAuthError(err, 'Kata sandi saat ini salah atau gagal memperbarui kata sandi.'));
+    }
   },
 
   async loginWithGoogle(): Promise<User> {
@@ -776,7 +885,7 @@ export const api = {
   },
 
   async createUser(
-    userData: Partial<User>,
+    userData: Partial<User> & { password?: string },
     actor: User
   ): Promise<User> {
     if (actor.role !== 'Administrator') throw new Error('Akses ditolak. Hanya Administrator.');
@@ -784,8 +893,8 @@ export const api = {
     if (!uid) throw new Error('Sesi login tidak valid.');
 
     const name = String(userData.name || '').trim().slice(0, 150);
-    const email = String(userData.email || '').trim().toLowerCase().slice(0, 150);
-    if (!name || !email) throw new Error('Nama lengkap dan email akun Google wajib diisi.');
+    const email = normalizeLoginEmail(String(userData.email || '')).slice(0, 150);
+    if (!name || !email) throw new Error('Nama lengkap dan email pengguna wajib diisi.');
 
     const role: UserRole =
       userData.role === 'Administrator' || userData.role === 'Operator' || userData.role === 'Viewer'
@@ -793,8 +902,13 @@ export const api = {
         : 'Operator';
     const department = String(userData.department || 'Universitas STEKOM').trim().slice(0, 150);
     const phone = String(userData.phone || '').trim().slice(0, 40);
+    const password = userData.password !== undefined ? String(userData.password) : 'stekom123';
 
-    // Check if an active user with this email already signed in earlier
+    if (password && password.length < 6) {
+      throw new Error('Kata sandi minimal harus 6 karakter.');
+    }
+
+    // Check if an active user with this email already exists in Firestore
     let activeSnap;
     try {
       activeSnap = await getDocs(query(collection(db, 'users'), where('email', '==', email)));
@@ -803,38 +917,66 @@ export const api = {
     }
 
     if (!activeSnap.empty) {
-      const existingDoc = activeSnap.docs[0];
+      throw new Error(`Email "${email}" sudah terdaftar pada sistem. Gunakan tombol Edit untuk mengubah perannya.`);
+    }
+
+    // Create actual Firebase Auth Email/Password user via isolated secondary App so Admin stays logged in
+    if (password) {
+      const secondaryAppName = `stekom-user-creator-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+      const secondaryAuth = getAuth(secondaryApp);
+      let createdUid = '';
       try {
-        await updateDoc(doc(db, 'users', existingDoc.id), {
-          name,
-          role,
-          department,
-          phone,
-          updatedAt: serverTimestamp()
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `users/${existingDoc.id}`);
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+        createdUid = cred.user.uid;
+        await updateProfile(cred.user, { displayName: name }).catch(() => undefined);
+      } catch (authErr: any) {
+        await signOut(secondaryAuth).catch(() => undefined);
+        await deleteApp(secondaryApp).catch(() => undefined);
+        throw new Error(mapFirebaseAuthError(authErr, 'Gagal membuat akun autentikasi pengguna.'));
       }
-      await writeAuditLog(actor, {
-        action: 'UBAH',
-        target_type: 'Pengguna',
-        target_id: existingDoc.id,
-        target_name: name,
-        details: `Memperbarui hak akses pengguna aktif ${name} (${email}) menjadi ${role}`
-      });
-      return {
-        id: existingDoc.id,
+
+      await signOut(secondaryAuth).catch(() => undefined);
+      await deleteApp(secondaryApp).catch(() => undefined);
+
+      const newUserPayload = {
+        uid: createdUid,
         name,
         email,
         role,
         department,
         phone,
-        created_at: toIsoString(existingDoc.data().createdAt),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      try {
+        await setDoc(doc(db, 'users', createdUid), newUserPayload);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `users/${createdUid}`);
+      }
+
+      await writeAuditLog(actor, {
+        action: 'TAMBAH',
+        target_type: 'Pengguna',
+        target_id: createdUid,
+        target_name: name,
+        details: `Menambahkan akun login Email/Sandi ${name} (${email}) sebagai ${role}`
+      });
+
+      return {
+        id: createdUid,
+        name,
+        email,
+        role,
+        department,
+        phone,
+        created_at: new Date().toISOString(),
         isPendingInvite: false
       };
     }
 
-    // Check if invite already exists for this email
+    // Invite-only flow (if explicitly no password provided, for Google Sign-In)
     let invSnap;
     try {
       invSnap = await getDocs(query(collection(db, 'user_invites'), where('email', '==', email)));
