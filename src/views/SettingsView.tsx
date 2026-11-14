@@ -15,16 +15,38 @@ interface SettingsViewProps {
   onResetData: () => Promise<void>;
   eventsCount: number;
   roomsCount: number;
+  serverStatus?: {
+    online: boolean;
+    persistence: string;
+    mode: string;
+    persistentServerStorage?: boolean;
+  };
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   userRole,
   onResetData,
   eventsCount,
-  roomsCount
+  roomsCount,
+  serverStatus
 }) => {
   const [resetting, setResetting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const isKvMode = serverStatus?.mode === 'kv-rest';
+  const isBrowserLocalVercel = serverStatus?.mode === 'serverless-ephemeral';
+
+  const modeBadgeLabel = isKvMode
+    ? 'Cloud KV Database (Redis REST)'
+    : isBrowserLocalVercel
+    ? 'Penyimpanan Browser Persisten (Vercel)'
+    : 'SQLite Backend Server';
+
+  const modeDescription = isKvMode
+    ? 'Seluruh data jadwal event, ruangan STEKOM, akun pengguna, dan audit log tersimpan persisten lintas perangkat di Cloud KV Database (Redis REST).'
+    : isBrowserLocalVercel
+    ? 'Aplikasi berjalan di Vercel serverless tanpa database eksternal. Perubahan data (tambah/ubah/hapus) disimpan persisten di penyimpanan lokal browser perangkat ini. Untuk sinkronisasi lintas perangkat di Vercel, tambahkan env var UPSTASH_REDIS_REST_URL dan UPSTASH_REDIS_REST_TOKEN.'
+    : 'Seluruh data jadwal event, ruangan STEKOM, akun pengguna, dan audit log tersimpan langsung di database SQLite pada server backend tanpa memerlukan layanan autentikasi eksternal.';
 
   const handleConfirmReset = async () => {
     setConfirmOpen(false);
@@ -47,7 +69,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <span>Pengaturan Sistem & Backend Database</span>
         </h1>
         <p className="text-xs text-stone-500 mt-1 font-medium">
-          Informasi status database SQLite server, autentikasi user/kata sandi, dan pemulihan data contoh Universitas STEKOM
+          Informasi status penyimpanan database aktif, autentikasi user/kata sandi, dan pemulihan data contoh Universitas STEKOM
         </p>
       </div>
 
@@ -64,11 +86,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   Status Database: AKTIF & TERSIMPAN PERSISTEN
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  SQLite Backend Server
+                  {modeBadgeLabel}
                 </span>
               </div>
               <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                Seluruh data jadwal event, 21 ruangan STEKOM, akun pengguna, dan audit log tersimpan langsung di database SQLite pada server backend tanpa memerlukan layanan autentikasi eksternal.
+                {modeDescription}
               </p>
             </div>
           </div>
@@ -117,10 +139,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="p-3.5 rounded-2xl bg-[#F7F5F0] border border-stone-200/70 space-y-1">
             <div className="flex items-center space-x-1.5 font-bold text-stone-900">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" strokeWidth={1.75} />
-              <span>Database SQLite Terintegrasi Server</span>
+              <span>{modeBadgeLabel}</span>
             </div>
             <p className="text-[11px] text-stone-600 leading-relaxed">
-              Setiap penambahan event, perubahan ruangan, maupun pembuatan akun langsung tersimpan persisten di database SQLite server (WAL mode).
+              Setiap penambahan event, penghapusan jadwal, perubahan ruangan, maupun pembuatan akun langsung tersimpan persisten agar tetap aman saat halaman dimuat ulang.
             </p>
           </div>
 
@@ -130,7 +152,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span>Login User/Sandi & RBAC Langsung Aktif</span>
             </div>
             <p className="text-[11px] text-stone-600 leading-relaxed">
-              Verifikasi hak akses Administrator, Operator, dan Viewer dijalankan langsung oleh server API tanpa perlu setup provider eksternal.
+              Verifikasi hak akses Administrator, Operator, dan Viewer dijalankan langsung oleh sistem tanpa perlu setup provider eksternal.
             </p>
           </div>
         </div>
@@ -180,7 +202,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <h3 className="text-sm font-extrabold text-stone-900">Reset Data Contoh STEKOM?</h3>
             </div>
             <p className="text-stone-600 leading-relaxed">
-              Seluruh jadwal event dan data 21 ruangan di database SQLite akan dikembalikan ke data awal default Universitas STEKOM (akun pengguna tetap dipertahankan). Tindakan ini tidak dapat dibatalkan.
+              Seluruh jadwal event dan data {roomsCount} ruangan akan dikembalikan ke data awal default Universitas STEKOM (akun pengguna tetap dipertahankan). Tindakan ini tidak dapat dibatalkan.
             </p>
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button

@@ -14,7 +14,12 @@ import {
   Wrench
 } from 'lucide-react';
 import { CampusEvent, Room, RoomLiveStatus, UserRole } from '../types';
-import { formatDateFullIndo, formatDateIndo, getRoomLiveStatus } from '../utils/conflictDetector';
+import {
+  formatDateFullIndo,
+  formatDateIndo,
+  getRoomLiveStatus,
+  getTodayWibDateStr
+} from '../utils/conflictDetector';
 
 interface RoomMonitoringViewProps {
   rooms: Room[];
@@ -31,7 +36,7 @@ export const RoomMonitoringView: React.FC<RoomMonitoringViewProps> = ({
   onBookRoom,
   onSelectEvent
 }) => {
-  const [selectedDate, setSelectedDate] = useState('2026-11-10');
+  const [selectedDate, setSelectedDate] = useState(() => getTodayWibDateStr());
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [buildingFilter, setBuildingFilter] = useState<string>('all');
   const [search, setSearch] = useState('');

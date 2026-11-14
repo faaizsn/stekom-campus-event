@@ -44,7 +44,6 @@ export interface User {
   department: string;
   phone?: string;
   created_at: string;
-  isPendingInvite?: boolean;
 }
 
 export interface AuditLog {

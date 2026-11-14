@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   AlertTriangle,
   Calendar,
@@ -31,7 +31,7 @@ interface EventsViewProps {
   onOpenCreateModal: () => void;
   onSelectEvent: (event: CampusEvent) => void;
   onEditEvent: (event: CampusEvent) => void;
-  onDeleteEvent: (id: string) => void;
+  onDeleteEvent: (id: string) => Promise<void> | void;
   onOpenMonthlyRecap: () => void;
 }
 
@@ -51,6 +51,7 @@ export const EventsView: React.FC<EventsViewProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
   const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const roomMap = useMemo(() => new Map(rooms.map((r) => [r.id, r])), [rooms]);
 
@@ -93,10 +94,17 @@ export const EventsView: React.FC<EventsViewProps> = ({
 
   // Pagination
   const totalPages = Math.ceil(filteredEvents.length / itemsPerPage) || 1;
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   const paginatedEvents = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * itemsPerPage;
     return filteredEvents.slice(start, start + itemsPerPage);
-  }, [filteredEvents, currentPage]);
+  }, [filteredEvents, currentPage, totalPages]);
 
   const canModify = userRole === 'Administrator' || userRole === 'Operator';
 
@@ -391,18 +399,28 @@ export const EventsView: React.FC<EventsViewProps> = ({
             <div className="mt-5 flex items-center justify-end space-x-2">
               <button
                 onClick={() => setDeleteCandidateId(null)}
-                className="px-3.5 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl transition"
+                disabled={deleting}
+                className="px-3.5 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl transition disabled:opacity-50"
               >
                 Batal
               </button>
               <button
-                onClick={() => {
-                  onDeleteEvent(deleteCandidateId);
-                  setDeleteCandidateId(null);
+                onClick={async () => {
+                  const targetId = deleteCandidateId;
+                  try {
+                    setDeleting(true);
+                    await onDeleteEvent(targetId);
+                    setDeleteCandidateId(null);
+                  } catch {
+                    // toast error handled in App.tsx
+                  } finally {
+                    setDeleting(false);
+                  }
                 }}
-                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition"
+                disabled={deleting}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition disabled:opacity-50"
               >
-                Ya, Hapus
+                {deleting ? 'Menghapus...' : 'Ya, Hapus'}
               </button>
             </div>
           </div>

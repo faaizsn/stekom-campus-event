@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertTriangle,
   Calendar,
@@ -27,7 +27,7 @@ interface EventDetailModalProps {
   rooms: Room[];
   userRole: UserRole;
   onEdit: (event: CampusEvent) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void> | void;
   onUpdateStatus: (id: string, newStatus: 'Scheduled' | 'Dibatalkan' | 'Menunggu Konfirmasi') => Promise<void>;
   onPrintTicket?: (event: CampusEvent) => void;
 }
@@ -45,7 +45,14 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 }) => {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConfirmDeleteOpen(false);
+    setStatusError(null);
+    setDeleting(false);
+  }, [isOpen, event?.id]);
 
   if (!isOpen || !event) return null;
 
@@ -63,6 +70,21 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
       setStatusError(err.message || 'Gagal mengubah status event');
     } finally {
       setUpdatingStatus(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      setStatusError(null);
+      setDeleting(true);
+      await onDelete(event.id);
+      setConfirmDeleteOpen(false);
+      onClose();
+    } catch (err: any) {
+      setStatusError(err?.message || 'Gagal menghapus event');
+      setConfirmDeleteOpen(false);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -224,18 +246,17 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
             <div className="flex items-center space-x-2 shrink-0">
               <button
                 onClick={() => setConfirmDeleteOpen(false)}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                disabled={deleting}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50"
               >
                 Batal
               </button>
               <button
-                onClick={() => {
-                  onDelete(event.id);
-                  onClose();
-                }}
-                className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm"
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm disabled:opacity-50"
               >
-                Ya, Hapus Permanen
+                {deleting ? 'Menghapus...' : 'Ya, Hapus Permanen'}
               </button>
             </div>
           </div>

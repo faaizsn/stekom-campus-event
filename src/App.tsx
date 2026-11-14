@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -20,7 +20,7 @@ import {
   Room,
   User
 } from './types';
-import { checkEventConflict } from './utils/conflictDetector';
+import { checkEventConflict, getTodayWibDateStr } from './utils/conflictDetector';
 import { AuditLogsView } from './views/AuditLogsView';
 import { CalendarView } from './views/CalendarView';
 import { DashboardView } from './views/DashboardView';
@@ -102,7 +102,8 @@ function AppContent() {
   const [serverStatus, setServerStatus] = useState({
     online: true,
     persistence: 'SQLite Database (Server Backend)',
-    mode: 'sqlite'
+    mode: 'sqlite',
+    persistentServerStorage: true
   });
 
   // Data State
@@ -110,6 +111,10 @@ function AppContent() {
   const [events, setEvents] = useState<CampusEvent[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+
+  // Sequence & timer refs to prevent stale interval overwrites and overlapping toasts
+  const refreshSeqRef = useRef(0);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Filter State
   const [filters, setFilters] = useState<FilterOptions>(DEFAULT_FILTERS);
@@ -134,15 +139,26 @@ function AppContent() {
 
   // Toast notification helper
   const showToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
     setToast({ type, message });
-    setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
       setToast(null);
+      toastTimerRef.current = null;
     }, 4500);
   }, []);
 
-  // Load all data from SQLite backend scoped by user role
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  // Load all data from active backend scoped by user role
   const refreshAllData = useCallback(
     async (user: User, silent = false) => {
+      const reqSeq = ++refreshSeqRef.current;
       if (!silent) setLoading(true);
       try {
         const [roomsList, eventsList, logsList, usersList] = await Promise.all([
@@ -152,16 +168,19 @@ function AppContent() {
           user.role === 'Administrator' ? api.getUsers() : Promise.resolve<User[]>([])
         ]);
 
+        if (reqSeq !== refreshSeqRef.current) return;
+
         setRooms(roomsList);
         setEvents(eventsList);
         setAuditLogs(logsList);
         setUsers(usersList);
       } catch (err: any) {
+        if (reqSeq !== refreshSeqRef.current) return;
         if (!silent) {
           showToast('error', err?.message || 'Gagal memuat data dari server database.');
         }
       } finally {
-        if (!silent) setLoading(false);
+        if (!silent && reqSeq === refreshSeqRef.current) setLoading(false);
       }
     },
     [showToast]
@@ -172,18 +191,18 @@ function AppContent() {
     let active = true;
     const init = async () => {
       try {
-        const [statusRes, restoredUser] = await Promise.all([
-          api.checkStatus().catch(() => null),
-          api.restoreSession()
-        ]);
+        const statusRes = await api.checkStatus().catch(() => null);
         if (!active) return;
         if (statusRes) {
           setServerStatus({
             online: statusRes.status === 'online',
             persistence: statusRes.persistence || 'SQLite Database (Server Backend)',
-            mode: statusRes.mode || 'sqlite'
+            mode: statusRes.mode || 'sqlite',
+            persistentServerStorage: statusRes.persistentServerStorage !== false
           });
         }
+        const restoredUser = await api.restoreSession();
+        if (!active) return;
         if (restoredUser) {
           setCurrentUser(restoredUser);
           await refreshAllData(restoredUser);
@@ -248,7 +267,7 @@ function AppContent() {
   // Open Form Modal for New Event
   const handleOpenCreateModal = (dateStr?: string, roomId?: string) => {
     setEditingEvent(null);
-    setInitialDateForForm(dateStr || '2026-11-10');
+    setInitialDateForForm(dateStr || getTodayWibDateStr());
     setInitialRoomForForm(roomId);
     setFormModalOpen(true);
   };
@@ -267,9 +286,18 @@ function AppContent() {
     try {
       if (eventData.id) {
         const updated = await api.updateEvent(eventData.id, eventData);
+        refreshSeqRef.current++;
+        setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+        setSelectedEvent((prev) => (prev?.id === updated.id ? updated : prev));
         showToast('success', `Jadwal event "${updated.nama_event}" berhasil diperbarui.`);
       } else {
         const created = await api.createEvent(eventData);
+        refreshSeqRef.current++;
+        setEvents((prev) =>
+          [...prev, created].sort((a, b) =>
+            `${a.tanggal} ${a.jam_mulai}`.localeCompare(`${b.tanggal} ${b.jam_mulai}`)
+          )
+        );
         showToast('success', `Event baru "${created.nama_event}" berhasil diajukan & dijadwalkan.`);
       }
       await refreshAllData(currentUser, true);
@@ -285,10 +313,17 @@ function AppContent() {
     try {
       const target = events.find((e) => e.id === id);
       await api.deleteEvent(id);
+      refreshSeqRef.current++;
+      setEvents((prev) => prev.filter((e) => e.id !== id));
+      if (selectedEvent?.id === id) {
+        setSelectedEvent(null);
+        setDetailModalOpen(false);
+      }
       showToast('success', `Event "${target?.nama_event || id}" berhasil dihapus.`);
       await refreshAllData(currentUser, true);
     } catch (err: any) {
       showToast('error', err?.message || 'Gagal menghapus event');
+      throw err;
     }
   };
 
@@ -324,7 +359,10 @@ function AppContent() {
     }
 
     try {
-      await api.updateEvent(id, { status: newStatus });
+      const updated = await api.updateEvent(id, { status: newStatus });
+      refreshSeqRef.current++;
+      setEvents((prev) => prev.map((e) => (e.id === id ? updated : e)));
+      setSelectedEvent((prev) => (prev?.id === id ? updated : prev));
       showToast('success', `Status event diubah menjadi: ${newStatus}`);
       await refreshAllData(currentUser, true);
     } catch (err: any) {
@@ -338,6 +376,8 @@ function AppContent() {
     if (!currentUser) return;
     try {
       const result = await api.updateRoom(id, updated);
+      refreshSeqRef.current++;
+      setRooms((prev) => prev.map((r) => (r.id === id ? result : r)));
       showToast('success', `Data ruangan "${result.name}" berhasil diperbarui.`);
       await refreshAllData(currentUser, true);
     } catch (err: any) {
@@ -350,6 +390,8 @@ function AppContent() {
     if (!currentUser) return;
     try {
       const result = await api.createRoom(newRoom);
+      refreshSeqRef.current++;
+      setRooms((prev) => [...prev, result].sort((a, b) => a.name.localeCompare(b.name)));
       showToast('success', `Ruangan baru "${result.name}" berhasil ditambahkan.`);
       await refreshAllData(currentUser, true);
     } catch (err: any) {
@@ -366,6 +408,8 @@ function AppContent() {
     try {
       const { usedDefaultPassword, ...payload } = newUserData;
       const user = await api.createUser(payload);
+      refreshSeqRef.current++;
+      setUsers((prev) => [...prev, user].sort((a, b) => a.name.localeCompare(b.name)));
       const passInfo = usedDefaultPassword ? 'default: stekom123' : 'sesuai kata sandi yang diisi';
       showToast(
         'success',
@@ -381,7 +425,12 @@ function AppContent() {
   const handleUpdateUser = async (userId: string, data: Partial<User>) => {
     if (!currentUser) return;
     try {
-      await api.updateUser(userId, data);
+      const updatedUser = await api.updateUser(userId, data);
+      refreshSeqRef.current++;
+      setUsers((prev) => prev.map((u) => (u.id === userId ? updatedUser : u)));
+      if (currentUser.id === userId) {
+        setCurrentUser(updatedUser);
+      }
       showToast('success', 'Data & peran pengguna berhasil diperbarui.');
       await refreshAllData(currentUser, true);
     } catch (err: any) {
@@ -407,10 +456,13 @@ function AppContent() {
     if (!currentUser) return;
     try {
       await api.deleteUser(id);
+      refreshSeqRef.current++;
+      setUsers((prev) => prev.filter((u) => u.id !== id));
       showToast('success', 'Akses pengguna berhasil dihapus.');
       await refreshAllData(currentUser, true);
     } catch (err: any) {
       showToast('error', err?.message || 'Gagal menghapus pengguna');
+      throw err;
     }
   };
 
@@ -419,7 +471,8 @@ function AppContent() {
     if (!currentUser) return;
     try {
       await api.resetData();
-      showToast('success', 'Data contoh Universitas STEKOM berhasil dipulihkan ke database SQLite.');
+      refreshSeqRef.current++;
+      showToast('success', 'Data contoh Universitas STEKOM berhasil dipulihkan.');
       await refreshAllData(currentUser, true);
     } catch (err: any) {
       showToast('error', err?.message || 'Gagal me-reset data');
@@ -443,7 +496,7 @@ function AppContent() {
   if (!currentUser) {
     return (
       <>
-        <LoginView onLoginSuccess={handleLoginSuccess} />
+        <LoginView onLoginSuccess={handleLoginSuccess} serverStatus={serverStatus} />
         {toast && (
           <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border border-stone-200 text-xs font-semibold bg-[#FCFBF8]">
             {toast.type === 'success' && (
@@ -606,6 +659,7 @@ function AppContent() {
                   onResetData={handleResetData}
                   eventsCount={events.length}
                   roomsCount={rooms.length}
+                  serverStatus={serverStatus}
                 />
               )}
             </>

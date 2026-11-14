@@ -161,7 +161,8 @@
         "AC",
         "36 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-2-9",
@@ -177,7 +178,8 @@
         "AC",
         "40 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-2-10",
@@ -193,7 +195,8 @@
         "AC",
         "30 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-3-6",
@@ -209,7 +212,8 @@
         "AC Dual Unit",
         "50 Kursi Kuliah"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-3-7",
@@ -225,7 +229,8 @@
         "AC",
         "30 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-3-8",
@@ -241,7 +246,8 @@
         "AC",
         "30 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-3-9",
@@ -257,7 +263,8 @@
         "AC",
         "40 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-3-10",
@@ -273,7 +280,8 @@
         "AC",
         "40 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-3-11",
@@ -289,7 +297,8 @@
         "AC",
         "40 Kursi Kuliah Single"
       ],
-      "status": "Tersedia"
+      "status": "Tersedia",
+      "notes": ""
     },
     {
       "id": "room-b-2-7-1",
@@ -650,9 +659,8 @@
     "campus_address": "Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192",
     "campus_phone": "(024) 6723456 / 0812-3456-7890",
     "campus_website": "https://stekom.ac.id",
-    "mode": "demo",
-    "firebase_configured": false,
+    "mode": "serverless-ephemeral",
     "timezone": "Asia/Jakarta (WIB)",
-    "updated_at": "2026-11-13T04:28:21.249Z"
+    "updated_at": "2026-11-14T07:16:02.382Z"
   }
 }

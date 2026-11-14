@@ -13,7 +13,7 @@ import {
   X
 } from 'lucide-react';
 import { CampusEvent, EventStatus, Room } from '../types';
-import { checkEventConflict } from '../utils/conflictDetector';
+import { checkEventConflict, getTodayWibDateStr } from '../utils/conflictDetector';
 
 interface EventFormModalProps {
   isOpen: boolean;
@@ -67,7 +67,7 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
       } else {
         // Reset to default new event
         setNamaEvent('');
-        setTanggal(initialDate || new Date().toISOString().split('T')[0]);
+        setTanggal(initialDate || getTodayWibDateStr());
         setJamMulai('09:00');
         setJamSelesai('12:00');
         setJumlahPeserta(30);

@@ -35,6 +35,7 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
   const [editStatus, setEditStatus] = useState<'Tersedia' | 'Pemeliharaan'>('Tersedia');
   const [editFacilities, setEditFacilities] = useState<string>('');
   const [editNotes, setEditNotes] = useState<string>('');
+  const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -65,10 +66,12 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
     setEditStatus(room.status);
     setEditFacilities((room.facilities || []).join(', '));
     setEditNotes(room.notes || '');
+    setEditError(null);
   };
 
   const handleSaveEdit = async () => {
     if (!editingRoom) return;
+    setEditError(null);
     try {
       setSaving(true);
       await onUpdateRoom(editingRoom.id, {
@@ -82,7 +85,7 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
       });
       setEditingRoom(null);
     } catch (err: any) {
-      alert(err.message || 'Gagal menyimpan perubahan ruangan');
+      setEditError(err?.message || 'Gagal menyimpan perubahan ruangan');
     } finally {
       setSaving(false);
     }
@@ -131,7 +134,7 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
                 : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            Semua (21 Ruang)
+            Semua ({rooms.length} Ruang)
           </button>
           <button
             onClick={() => setSelectedCategory('general')}
@@ -141,7 +144,7 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
                 : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            8 Ruang Umum
+            {generalRooms.length} Ruang Umum
           </button>
           <button
             onClick={() => setSelectedCategory('classes')}
@@ -151,7 +154,7 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
                 : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            13 Ruang Kelas
+            {classRooms.length} Ruang Kelas
           </button>
         </div>
 
@@ -277,6 +280,12 @@ export const MasterRoomsView: React.FC<MasterRoomsViewProps> = ({
             </div>
 
             <div className="space-y-4 py-4 text-xs">
+              {editError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span className="font-medium leading-relaxed">{editError}</span>
+                </div>
+              )}
               <div>
                 <label className="block font-bold text-stone-700 mb-1">
                   Kapasitas Ruangan (Orang)

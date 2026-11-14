@@ -765,32 +765,241 @@ function mapAuditRecord(row: Record<string, unknown>): DbAuditLog {
   };
 }
 
+function getJakartaTodayDateStr(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+}
+
 interface StorageAdapter {
   engineLabel: string;
   storagePath: string;
-  getAllRooms(): DbRoom[];
-  getRoomById(id: string): DbRoom | null;
-  insertRoom(room: DbRoom): void;
-  updateRoom(room: DbRoom): void;
-  deleteRoom(id: string): void;
-  getAllEvents(): DbEvent[];
-  getEventById(id: string): DbEvent | null;
-  insertEvent(event: DbEvent): void;
-  updateEvent(event: DbEvent): void;
-  deleteEvent(id: string): void;
-  getAllUsers(): DbUser[];
-  findUserById(id: string): DbUser | null;
-  findUserByEmailOrUsername(identifier: string): DbUser | null;
-  insertUser(user: DbUser): void;
-  updateUser(user: DbUser): void;
-  deleteUser(id: string): void;
-  getAuditLogs(): DbAuditLog[];
-  insertAuditLog(entry: Omit<DbAuditLog, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): void;
-  getSettings(): DbSettings;
-  resetRoomsAndEvents(actor: DbUser): void;
+  mode: string;
+  persistentServerStorage: boolean;
+  getAllRooms(): Promise<DbRoom[]> | DbRoom[];
+  getRoomById(id: string): Promise<DbRoom | null> | DbRoom | null;
+  insertRoom(room: DbRoom): Promise<void> | void;
+  updateRoom(room: DbRoom): Promise<void> | void;
+  deleteRoom(id: string): Promise<void> | void;
+  getAllEvents(): Promise<DbEvent[]> | DbEvent[];
+  getEventById(id: string): Promise<DbEvent | null> | DbEvent | null;
+  insertEvent(event: DbEvent): Promise<void> | void;
+  updateEvent(event: DbEvent): Promise<void> | void;
+  deleteEvent(id: string): Promise<void> | void;
+  getAllUsers(): Promise<DbUser[]> | DbUser[];
+  findUserById(id: string): Promise<DbUser | null> | DbUser | null;
+  findUserByEmailOrUsername(identifier: string): Promise<DbUser | null> | DbUser | null;
+  insertUser(user: DbUser): Promise<void> | void;
+  updateUser(user: DbUser): Promise<void> | void;
+  deleteUser(id: string): Promise<void> | void;
+  getAuditLogs(): Promise<DbAuditLog[]> | DbAuditLog[];
+  insertAuditLog(entry: Omit<DbAuditLog, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): Promise<void> | void;
+  getSettings(): Promise<DbSettings> | DbSettings;
+  resetRoomsAndEvents(actor: DbUser): Promise<void> | void;
+}
+
+function createInitialSeedDb(mode: string): JsonDatabaseSchema {
+  return {
+    rooms: INITIAL_ROOMS.map((r) => ({ ...r, facilities: [...r.facilities] })),
+    events: INITIAL_EVENTS.map((e) => ({ ...e, ruangan_ids: [...e.ruangan_ids] })),
+    users: INITIAL_USERS.map((u) => ({
+      ...u,
+      email: normalizeLoginEmail(u.email),
+      password_hash: hashPassword(getDefaultPasswordForEmail(u.email))
+    })),
+    audit_logs: INITIAL_AUDIT_LOGS.map((l) => ({ ...l })),
+    system_settings: {
+      app_name: 'STEKOM CAMPUS EVENT MANAGEMENT',
+      campus_name: 'Universitas STEKOM',
+      campus_address: 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
+      campus_phone: '(024) 6723456 / 0812-3456-7890',
+      campus_website: 'https://stekom.ac.id',
+      mode,
+      timezone: 'Asia/Jakarta (WIB)',
+      updated_at: new Date().toISOString()
+    }
+  };
+}
+
+async function createKvRestAdapter(restUrl: string, restToken: string): Promise<StorageAdapter> {
+  const baseUrl = restUrl.replace(/\/+$/, '');
+  const KV_KEY = 'stekom_campus_event_db_v1';
+
+  const kvCommand = async <T = unknown>(args: unknown[]): Promise<T> => {
+    const res = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${restToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(args)
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`KV REST error (${res.status}): ${txt}`);
+    }
+    const json = (await res.json()) as { result: T; error?: string };
+    if (json.error) throw new Error(json.error);
+    return json.result;
+  };
+
+  const loadDb = async (): Promise<JsonDatabaseSchema> => {
+    const raw = await kvCommand<string | null>(['GET', KV_KEY]);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<JsonDatabaseSchema>;
+        if (Array.isArray(parsed.rooms) && Array.isArray(parsed.users)) {
+          return {
+            rooms: parsed.rooms.map((r) => mapRoomRecord(r as unknown as Record<string, unknown>)),
+            events: (parsed.events || []).map((e) => mapEventRecord(e as unknown as Record<string, unknown>)),
+            users: parsed.users.map((u) => mapUserRecord(u as unknown as Record<string, unknown>)),
+            audit_logs: (parsed.audit_logs || []).map((l) => mapAuditRecord(l as unknown as Record<string, unknown>)),
+            system_settings: {
+              app_name: parsed.system_settings?.app_name || 'STEKOM CAMPUS EVENT MANAGEMENT',
+              campus_name: parsed.system_settings?.campus_name || 'Universitas STEKOM',
+              campus_address: parsed.system_settings?.campus_address || 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
+              campus_phone: parsed.system_settings?.campus_phone || '(024) 6723456 / 0812-3456-7890',
+              campus_website: parsed.system_settings?.campus_website || 'https://stekom.ac.id',
+              mode: 'kv-rest',
+              timezone: parsed.system_settings?.timezone || 'Asia/Jakarta (WIB)',
+              updated_at: parsed.system_settings?.updated_at || new Date().toISOString()
+            }
+          };
+        }
+      } catch {
+        // re-seed below if corrupted
+      }
+    }
+    const seeded = createInitialSeedDb('kv-rest');
+    await kvCommand(['SET', KV_KEY, JSON.stringify(seeded)]);
+    return seeded;
+  };
+
+  const mutateDb = async (fn: (db: JsonDatabaseSchema) => void): Promise<void> => {
+    const db = await loadDb();
+    fn(db);
+    db.system_settings.updated_at = new Date().toISOString();
+    await kvCommand(['SET', KV_KEY, JSON.stringify(db)]);
+  };
+
+  // Ensure initial seed exists
+  await loadDb();
+
+  return {
+    engineLabel: 'Cloud KV Database (Redis REST)',
+    storagePath: `kv://${KV_KEY}`,
+    mode: 'kv-rest',
+    persistentServerStorage: true,
+    getAllRooms: async () => {
+      const db = await loadDb();
+      return [...db.rooms].sort((a, b) => a.name.localeCompare(b.name));
+    },
+    getRoomById: async (id) => {
+      const db = await loadDb();
+      return db.rooms.find((r) => r.id === id) || null;
+    },
+    insertRoom: async (r) => mutateDb((db) => { db.rooms.push(r); }),
+    updateRoom: async (r) => mutateDb((db) => {
+      const idx = db.rooms.findIndex((item) => item.id === r.id);
+      if (idx >= 0) db.rooms[idx] = r;
+    }),
+    deleteRoom: async (id) => mutateDb((db) => {
+      db.rooms = db.rooms.filter((r) => r.id !== id);
+    }),
+    getAllEvents: async () => {
+      const db = await loadDb();
+      return [...db.events].sort((a, b) => `${a.tanggal} ${a.jam_mulai}`.localeCompare(`${b.tanggal} ${b.jam_mulai}`));
+    },
+    getEventById: async (id) => {
+      const db = await loadDb();
+      return db.events.find((e) => e.id === id) || null;
+    },
+    insertEvent: async (ev) => mutateDb((db) => { db.events.push(ev); }),
+    updateEvent: async (ev) => mutateDb((db) => {
+      const idx = db.events.findIndex((item) => item.id === ev.id);
+      if (idx >= 0) db.events[idx] = ev;
+    }),
+    deleteEvent: async (id) => mutateDb((db) => {
+      db.events = db.events.filter((e) => e.id !== id);
+    }),
+    getAllUsers: async () => {
+      const db = await loadDb();
+      return [...db.users].sort((a, b) => a.name.localeCompare(b.name));
+    },
+    findUserById: async (id) => {
+      const db = await loadDb();
+      return db.users.find((u) => u.id === id) || null;
+    },
+    findUserByEmailOrUsername: async (identifier) => {
+      const rawLower = String(identifier || '').trim().toLowerCase();
+      const norm = normalizeLoginEmail(rawLower);
+      if (!rawLower) return null;
+      const db = await loadDb();
+      return db.users.find((u) => u.email.toLowerCase() === norm || u.email.toLowerCase() === rawLower) || null;
+    },
+    insertUser: async (u) => mutateDb((db) => { db.users.push(u); }),
+    updateUser: async (u) => mutateDb((db) => {
+      const idx = db.users.findIndex((item) => item.id === u.id);
+      if (idx >= 0) db.users[idx] = u;
+    }),
+    deleteUser: async (id) => mutateDb((db) => {
+      db.users = db.users.filter((u) => u.id !== id);
+    }),
+    getAuditLogs: async () => {
+      const db = await loadDb();
+      return [...db.audit_logs].slice(0, 500);
+    },
+    insertAuditLog: async (entry) => mutateDb((db) => {
+      db.audit_logs.unshift({
+        id: entry.id || `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        user_name: entry.user_name,
+        user_role: entry.user_role,
+        action: entry.action,
+        target_type: entry.target_type,
+        target_id: entry.target_id,
+        target_name: entry.target_name,
+        details: entry.details,
+        timestamp: entry.timestamp || new Date().toISOString()
+      });
+    }),
+    getSettings: async () => {
+      const db = await loadDb();
+      return db.system_settings;
+    },
+    resetRoomsAndEvents: async (actor) => mutateDb((db) => {
+      db.rooms = INITIAL_ROOMS.map((r) => ({ ...r, facilities: [...r.facilities] }));
+      db.events = INITIAL_EVENTS.map((e) => ({ ...e, ruangan_ids: [...e.ruangan_ids] }));
+      db.audit_logs.unshift({
+        id: `log-${Date.now()}`,
+        user_name: actor.name,
+        user_role: actor.role,
+        action: 'PENGATURAN',
+        target_type: 'Sistem',
+        target_id: 'sys-reset',
+        target_name: 'Database Reset',
+        details: 'Melakukan reset data ruangan dan event contoh awal Universitas STEKOM',
+        timestamp: new Date().toISOString()
+      });
+    })
+  };
 }
 
 async function createStorageAdapter(): Promise<StorageAdapter> {
+  // 1. Prefer Upstash Redis / Vercel KV REST when configured (works across all Vercel lambdas)
+  const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (kvUrl && kvToken) {
+    try {
+      return await createKvRestAdapter(kvUrl, kvToken);
+    } catch (kvErr) {
+      console.warn('Cloud KV REST unavailable, falling back:', kvErr);
+    }
+  }
+
+  const isEphemeralServerless = Boolean(process.env.VERCEL);
+
   let legacyData: Partial<JsonDatabaseSchema> | null = null;
   if (fs.existsSync(JSON_PATH)) {
     try {
@@ -800,19 +1009,20 @@ async function createStorageAdapter(): Promise<StorageAdapter> {
     }
   }
 
-  // Prefer Node 22 built-in SQLite (DatabaseSync) when available
-  try {
-    const sqliteModuleName = 'node:sqlite';
-    const sqliteMod = (await import(sqliteModuleName)) as {
-      DatabaseSync: new (path: string) => {
-        exec(sql: string): void;
-        prepare(sql: string): {
-          run(...params: unknown[]): unknown;
-          get(...params: unknown[]): Record<string, unknown> | undefined;
-          all(...params: unknown[]): Array<Record<string, unknown>>;
+  // 2. Prefer Node 22 built-in SQLite (DatabaseSync) when running on persistent server disk
+  if (!isEphemeralServerless) {
+    try {
+      const sqliteModuleName = 'node:sqlite';
+      const sqliteMod = (await import(sqliteModuleName)) as {
+        DatabaseSync: new (path: string) => {
+          exec(sql: string): void;
+          prepare(sql: string): {
+            run(...params: unknown[]): unknown;
+            get(...params: unknown[]): Record<string, unknown> | undefined;
+            all(...params: unknown[]): Array<Record<string, unknown>>;
+          };
         };
       };
-    };
     const sqlite = new sqliteMod.DatabaseSync(SQLITE_PATH);
     sqlite.exec(`
       PRAGMA journal_mode = WAL;
@@ -1032,6 +1242,8 @@ async function createStorageAdapter(): Promise<StorageAdapter> {
     return {
       engineLabel: 'SQLite Database (Server Backend)',
       storagePath: SQLITE_PATH,
+      mode: 'sqlite',
+      persistentServerStorage: true,
       getAllRooms: () =>
         sqlite.prepare('SELECT * FROM rooms ORDER BY name ASC').all().map(mapRoomRecord),
       getRoomById: (id) => {
@@ -1230,11 +1442,12 @@ async function createStorageAdapter(): Promise<StorageAdapter> {
         }
       }
     };
-  } catch (sqliteErr) {
-    console.warn('node:sqlite unavailable, falling back to JSON/memory database:', sqliteErr);
+    } catch (sqliteErr) {
+      console.warn('node:sqlite unavailable, falling back to JSON/memory database:', sqliteErr);
+    }
   }
 
-  // Fallback JSON + Memory store if runtime does not expose node:sqlite
+  // Fallback JSON + Memory store (also used on Vercel serverless when KV env vars are not set)
   let memDb: JsonDatabaseSchema = {
     rooms: legacyData?.rooms?.length ? legacyData.rooms.map((r) => mapRoomRecord(r as unknown as Record<string, unknown>)) : [...INITIAL_ROOMS],
     events: legacyData?.events ? legacyData.events.map((e) => mapEventRecord(e as unknown as Record<string, unknown>)) : [...INITIAL_EVENTS],
@@ -1253,7 +1466,7 @@ async function createStorageAdapter(): Promise<StorageAdapter> {
       campus_address: legacyData?.system_settings?.campus_address || 'Jl. Majapahit No. 605, Pedurungan Kidul, Kec. Pedurungan, Kota Semarang, Jawa Tengah 50192',
       campus_phone: legacyData?.system_settings?.campus_phone || '(024) 6723456 / 0812-3456-7890',
       campus_website: legacyData?.system_settings?.campus_website || 'https://stekom.ac.id',
-      mode: 'json',
+      mode: isEphemeralServerless ? 'serverless-ephemeral' : 'json',
       timezone: legacyData?.system_settings?.timezone || 'Asia/Jakarta (WIB)',
       updated_at: new Date().toISOString()
     }
@@ -1269,8 +1482,12 @@ async function createStorageAdapter(): Promise<StorageAdapter> {
   persistJson();
 
   return {
-    engineLabel: 'JSON Server Database',
+    engineLabel: isEphemeralServerless
+      ? 'Serverless Browser-Synced Storage (Vercel)'
+      : 'JSON Server Database',
     storagePath: JSON_PATH,
+    mode: isEphemeralServerless ? 'serverless-ephemeral' : 'json',
+    persistentServerStorage: !isEphemeralServerless,
     getAllRooms: () => [...memDb.rooms].sort((a, b) => a.name.localeCompare(b.name)),
     getRoomById: (id) => memDb.rooms.find((r) => r.id === id) || null,
     insertRoom: (r) => {
@@ -1429,8 +1646,27 @@ export async function createApiApp(): Promise<Express> {
   const store = await createStorageAdapter();
   const app = express();
   app.use(express.json());
+  app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  });
 
-  const requireAuth = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const wrap = (
+    fn: (req: AuthenticatedRequest, res: Response, next: NextFunction) => Promise<unknown> | unknown
+  ) => {
+    return (req: Request, res: Response, next: NextFunction) => {
+      Promise.resolve(fn(req as AuthenticatedRequest, res, next)).catch((err) => {
+        console.error('API route error:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: err?.message || 'Terjadi kesalahan internal server.' });
+        }
+      });
+    };
+  };
+
+  const requireAuth = wrap(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Autentikasi diperlukan. Silakan login terlebih dahulu.' });
@@ -1440,13 +1676,13 @@ export async function createApiApp(): Promise<Express> {
     if (!payload) {
       return res.status(401).json({ error: 'Sesi login tidak valid atau telah berakhir. Silakan login kembali.' });
     }
-    const user = store.findUserById(payload.sub);
+    const user = await store.findUserById(payload.sub);
     if (!user) {
       return res.status(401).json({ error: 'Akun pengguna tidak ditemukan atau telah dihapus.' });
     }
     req.authUser = user;
     next();
-  };
+  });
 
   const requireRoles = (...allowedRoles: UserRole[]) => {
     return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -1462,28 +1698,40 @@ export async function createApiApp(): Promise<Express> {
     };
   };
 
-  app.get('/api/status', (_req: Request, res: Response) => {
-    const rooms = store.getAllRooms();
-    const events = store.getAllEvents();
-    const users = store.getAllUsers();
-    const settings = store.getSettings();
+  app.get('/api/status', wrap(async (_req: Request, res: Response) => {
+    const [rooms, events, users, settings] = await Promise.all([
+      store.getAllRooms(),
+      store.getAllEvents(),
+      store.getAllUsers(),
+      store.getSettings()
+    ]);
 
     res.json({
       status: 'online',
       appName: settings.app_name,
       campus: settings.campus_name,
       persistence: store.engineLabel,
+      persistentServerStorage: store.persistentServerStorage,
       dbFilePath: store.storagePath,
       eventsCount: events.length,
       roomsCount: rooms.length,
       usersCount: users.length,
-      mode: settings.mode,
+      mode: store.mode || settings.mode,
       timezone: settings.timezone,
       timestamp: new Date().toISOString()
     });
+  }));
+
+  app.get('/api/seed-defaults', (_req: Request, res: Response) => {
+    res.json({
+      rooms: INITIAL_ROOMS,
+      events: INITIAL_EVENTS,
+      users: INITIAL_USERS.map(sanitizeUser),
+      audit_logs: INITIAL_AUDIT_LOGS
+    });
   });
 
-  app.post('/api/auth/login', (req: Request, res: Response) => {
+  app.post('/api/auth/login', wrap(async (req: Request, res: Response) => {
     const identifier = String(req.body?.email || req.body?.identifier || '').trim();
     const password = String(req.body?.password || '');
 
@@ -1491,14 +1739,14 @@ export async function createApiApp(): Promise<Express> {
       return res.status(400).json({ error: 'Email/username dan kata sandi wajib diisi.' });
     }
 
-    const user = store.findUserByEmailOrUsername(identifier);
+    const user = await store.findUserByEmailOrUsername(identifier);
     if (!user || !verifyPassword(password, user.password_hash)) {
       return res.status(401).json({ error: 'Email/username atau kata sandi salah. Silakan periksa kembali.' });
     }
 
     const token = createAuthToken(user);
 
-    store.insertAuditLog({
+    await store.insertAuditLog({
       user_name: user.name,
       user_role: user.role,
       action: 'LOGIN',
@@ -1512,11 +1760,11 @@ export async function createApiApp(): Promise<Express> {
       token,
       user: sanitizeUser(user)
     });
-  });
+  }));
 
-  app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/auth/logout', requireAuth, wrap(async (req: AuthenticatedRequest, res: Response) => {
     const user = req.authUser!;
-    store.insertAuditLog({
+    await store.insertAuditLog({
       user_name: user.name,
       user_role: user.role,
       action: 'LOGOUT',
@@ -1526,13 +1774,13 @@ export async function createApiApp(): Promise<Express> {
       details: `${user.name} (${user.email}) keluar (logout) dari sistem`
     });
     res.json({ success: true });
-  });
+  }));
 
   app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     res.json(sanitizeUser(req.authUser!));
   });
 
-  app.post('/api/auth/change-password', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/auth/change-password', requireAuth, wrap(async (req: AuthenticatedRequest, res: Response) => {
     const authUser = req.authUser!;
     const currentPassword = String(req.body?.currentPassword || '');
     const newPassword = String(req.body?.newPassword || '');
@@ -1550,12 +1798,12 @@ export async function createApiApp(): Promise<Express> {
       return res.status(400).json({ error: 'Kata sandi saat ini tidak sesuai.' });
     }
 
-    store.updateUser({
+    await store.updateUser({
       ...authUser,
       password_hash: hashPassword(newPassword)
     });
 
-    store.insertAuditLog({
+    await store.insertAuditLog({
       user_name: authUser.name,
       user_role: authUser.role,
       action: 'UBAH',
@@ -1566,18 +1814,18 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json({ success: true, message: 'Kata sandi berhasil diperbarui.' });
-  });
+  }));
 
-  app.post('/api/reset-data', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
-    store.resetRoomsAndEvents(req.authUser!);
+  app.post('/api/reset-data', requireAuth, requireRoles('Administrator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
+    await store.resetRoomsAndEvents(req.authUser!);
     res.json({ success: true, message: 'Data contoh berhasil di-reset ulang ke kondisi awal.' });
-  });
+  }));
 
-  app.get('/api/rooms', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
-    res.json(store.getAllRooms());
-  });
+  app.get('/api/rooms', requireAuth, wrap(async (_req: AuthenticatedRequest, res: Response) => {
+    res.json(await store.getAllRooms());
+  }));
 
-  app.post('/api/rooms', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/rooms', requireAuth, requireRoles('Administrator', 'Operator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
     const name = String(req.body?.name || '').trim();
     const code = String(req.body?.code || '').trim();
@@ -1598,8 +1846,8 @@ export async function createApiApp(): Promise<Express> {
       notes: String(req.body.notes || '')
     };
 
-    store.insertRoom(newRoom);
-    store.insertAuditLog({
+    await store.insertRoom(newRoom);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'TAMBAH',
@@ -1610,11 +1858,11 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.status(201).json(newRoom);
-  });
+  }));
 
-  app.put('/api/rooms/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
+  app.put('/api/rooms/:id', requireAuth, requireRoles('Administrator', 'Operator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const prevRoom = store.getRoomById(req.params.id);
+    const prevRoom = await store.getRoomById(req.params.id);
     if (!prevRoom) {
       return res.status(404).json({ error: 'Ruangan tidak ditemukan' });
     }
@@ -1632,8 +1880,8 @@ export async function createApiApp(): Promise<Express> {
       notes: req.body.notes !== undefined ? String(req.body.notes) : prevRoom.notes || ''
     };
 
-    store.updateRoom(updatedRoom);
-    store.insertAuditLog({
+    await store.updateRoom(updatedRoom);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'UBAH',
@@ -1644,16 +1892,16 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json(updatedRoom);
-  });
+  }));
 
-  app.delete('/api/rooms/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/rooms/:id', requireAuth, requireRoles('Administrator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const targetRoom = store.getRoomById(req.params.id);
+    const targetRoom = await store.getRoomById(req.params.id);
     if (!targetRoom) {
       return res.status(404).json({ error: 'Ruangan tidak ditemukan' });
     }
 
-    const events = store.getAllEvents();
+    const events = await store.getAllEvents();
     const isUsed = events.some(
       (e) => e.status !== 'Dibatalkan' && (e.ruangan_ids || []).includes(req.params.id)
     );
@@ -1663,8 +1911,8 @@ export async function createApiApp(): Promise<Express> {
       });
     }
 
-    store.deleteRoom(req.params.id);
-    store.insertAuditLog({
+    await store.deleteRoom(req.params.id);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'HAPUS',
@@ -1675,10 +1923,10 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json({ success: true, deletedRoom: targetRoom });
-  });
+  }));
 
-  app.get('/api/events', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    let events = store.getAllEvents();
+  app.get('/api/events', requireAuth, wrap(async (req: AuthenticatedRequest, res: Response) => {
+    let events = await store.getAllEvents();
     const { month, year, status, roomId, search, pic } = req.query;
 
     if (month && month !== 'all') {
@@ -1708,22 +1956,23 @@ export async function createApiApp(): Promise<Express> {
     }
 
     res.json(events);
-  });
+  }));
 
-  app.post('/api/events/check-conflict', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/events/check-conflict', requireAuth, wrap(async (req: AuthenticatedRequest, res: Response) => {
     const { id, tanggal, jam_mulai, jam_selesai, ruangan_ids, status } = req.body;
     if (!tanggal || !jam_mulai || !jam_selesai || !ruangan_ids || !ruangan_ids.length) {
       return res.json({ hasConflict: false, conflicts: [] });
     }
+    const [events, rooms] = await Promise.all([store.getAllEvents(), store.getAllRooms()]);
     const result = checkScheduleConflicts(
       { id, tanggal, jam_mulai, jam_selesai, ruangan_ids, status },
-      store.getAllEvents(),
-      store.getAllRooms()
+      events,
+      rooms
     );
     res.json(result);
-  });
+  }));
 
-  app.post('/api/events', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/events', requireAuth, requireRoles('Administrator', 'Operator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
     const {
       nama_event,
@@ -1756,10 +2005,11 @@ export async function createApiApp(): Promise<Express> {
     const finalStatus: EventStatus =
       status === 'Scheduled' || status === 'Dibatalkan' ? status : 'Menunggu Konfirmasi';
 
+    const [allEvents, allRooms] = await Promise.all([store.getAllEvents(), store.getAllRooms()]);
     const conflictResult = checkScheduleConflicts(
       { tanggal, jam_mulai, jam_selesai, ruangan_ids, status: finalStatus },
-      store.getAllEvents(),
-      store.getAllRooms()
+      allEvents,
+      allRooms
     );
 
     if (finalStatus === 'Scheduled' && conflictResult.hasConflict) {
@@ -1787,8 +2037,8 @@ export async function createApiApp(): Promise<Express> {
       created_by: actor.name
     };
 
-    store.insertEvent(newEvent);
-    store.insertAuditLog({
+    await store.insertEvent(newEvent);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'TAMBAH',
@@ -1799,11 +2049,11 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.status(201).json(newEvent);
-  });
+  }));
 
-  app.put('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
+  app.put('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const existingEvent = store.getEventById(req.params.id);
+    const existingEvent = await store.getEventById(req.params.id);
     if (!existingEvent) {
       return res.status(404).json({ error: 'Event tidak ditemukan' });
     }
@@ -1837,6 +2087,7 @@ export async function createApiApp(): Promise<Express> {
       return res.status(400).json({ error: 'Jumlah peserta harus berupa bilangan positif (> 0).' });
     }
 
+    const [allEvents, allRooms] = await Promise.all([store.getAllEvents(), store.getAllRooms()]);
     const conflictResult = checkScheduleConflicts(
       {
         id: existingEvent.id,
@@ -1846,8 +2097,8 @@ export async function createApiApp(): Promise<Express> {
         ruangan_ids: updatedRooms,
         status: updatedStatus
       },
-      store.getAllEvents(),
-      store.getAllRooms()
+      allEvents,
+      allRooms
     );
 
     if (updatedStatus === 'Scheduled' && conflictResult.hasConflict) {
@@ -1872,7 +2123,7 @@ export async function createApiApp(): Promise<Express> {
       updated_at: new Date().toISOString()
     };
 
-    store.updateEvent(updatedEvent);
+    await store.updateEvent(updatedEvent);
 
     let auditAction: 'UBAH' | 'KONFIRMASI' | 'BATALKAN' = 'UBAH';
     let auditDetail = `Memperbarui event "${updatedEvent.nama_event}"`;
@@ -1888,7 +2139,7 @@ export async function createApiApp(): Promise<Express> {
       }
     }
 
-    store.insertAuditLog({
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: auditAction,
@@ -1899,17 +2150,17 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json(updatedEvent);
-  });
+  }));
 
-  app.delete('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/events/:id', requireAuth, requireRoles('Administrator', 'Operator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const deleted = store.getEventById(req.params.id);
+    const deleted = await store.getEventById(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: 'Event tidak ditemukan' });
     }
 
-    store.deleteEvent(req.params.id);
-    store.insertAuditLog({
+    await store.deleteEvent(req.params.id);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'HAPUS',
@@ -1920,13 +2171,14 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json({ success: true, deletedEvent: deleted });
-  });
+  }));
 
-  app.get('/api/users', requireAuth, requireRoles('Administrator'), (_req: AuthenticatedRequest, res: Response) => {
-    res.json(store.getAllUsers().map(sanitizeUser));
-  });
+  app.get('/api/users', requireAuth, requireRoles('Administrator'), wrap(async (_req: AuthenticatedRequest, res: Response) => {
+    const users = await store.getAllUsers();
+    res.json(users.map(sanitizeUser));
+  }));
 
-  app.post('/api/users', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/users', requireAuth, requireRoles('Administrator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
     const name = String(req.body?.name || '').trim();
     const email = normalizeLoginEmail(String(req.body?.email || ''));
@@ -1948,7 +2200,7 @@ export async function createApiApp(): Promise<Express> {
     const requestedRole = String(req.body?.role || 'Operator') as UserRole;
     const role: UserRole = validRoles.includes(requestedRole) ? requestedRole : 'Operator';
 
-    if (store.findUserByEmailOrUsername(email)) {
+    if (await store.findUserByEmailOrUsername(email)) {
       return res.status(409).json({ error: `Email "${email}" sudah terdaftar dalam sistem.` });
     }
 
@@ -1963,8 +2215,8 @@ export async function createApiApp(): Promise<Express> {
       password_hash: hashPassword(password)
     };
 
-    store.insertUser(newUser);
-    store.insertAuditLog({
+    await store.insertUser(newUser);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'TAMBAH',
@@ -1975,11 +2227,11 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.status(201).json(sanitizeUser(newUser));
-  });
+  }));
 
-  app.put('/api/users/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+  app.put('/api/users/:id', requireAuth, requireRoles('Administrator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const prevUser = store.findUserById(req.params.id);
+    const prevUser = await store.findUserById(req.params.id);
     if (!prevUser) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
@@ -1992,7 +2244,7 @@ export async function createApiApp(): Promise<Express> {
       if (!normalizedEmail) {
         return res.status(400).json({ error: 'Email pengguna tidak boleh kosong.' });
       }
-      const existingOwner = store.findUserByEmailOrUsername(normalizedEmail);
+      const existingOwner = await store.findUserByEmailOrUsername(normalizedEmail);
       if (existingOwner && existingOwner.id !== prevUser.id) {
         return res.status(409).json({ error: `Email "${normalizedEmail}" sudah digunakan pengguna lain.` });
       }
@@ -2027,8 +2279,8 @@ export async function createApiApp(): Promise<Express> {
       password_hash: updatedHash
     };
 
-    store.updateUser(updated);
-    store.insertAuditLog({
+    await store.updateUser(updated);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'UBAH',
@@ -2041,11 +2293,11 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json(sanitizeUser(updated));
-  });
+  }));
 
-  app.post('/api/users/:id/reset-password', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/users/:id/reset-password', requireAuth, requireRoles('Administrator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
-    const target = store.findUserById(req.params.id);
+    const target = await store.findUserById(req.params.id);
     if (!target) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
@@ -2060,12 +2312,12 @@ export async function createApiApp(): Promise<Express> {
     }
 
     const finalPassword = hasCustom ? rawPw : 'stekom123';
-    store.updateUser({
+    await store.updateUser({
       ...target,
       password_hash: hashPassword(finalPassword)
     });
 
-    store.insertAuditLog({
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'UBAH',
@@ -2076,21 +2328,21 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json({ success: true, password: finalPassword });
-  });
+  }));
 
-  app.delete('/api/users/:id', requireAuth, requireRoles('Administrator'), (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/users/:id', requireAuth, requireRoles('Administrator'), wrap(async (req: AuthenticatedRequest, res: Response) => {
     const actor = req.authUser!;
     if (req.params.id === actor.id) {
       return res.status(400).json({ error: 'Anda tidak dapat menghapus akun Anda sendiri yang sedang aktif.' });
     }
 
-    const deleted = store.findUserById(req.params.id);
+    const deleted = await store.findUserById(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
 
-    store.deleteUser(req.params.id);
-    store.insertAuditLog({
+    await store.deleteUser(req.params.id);
+    await store.insertAuditLog({
       user_name: actor.name,
       user_role: actor.role,
       action: 'HAPUS',
@@ -2101,27 +2353,29 @@ export async function createApiApp(): Promise<Express> {
     });
 
     res.json({ success: true, deletedUser: sanitizeUser(deleted) });
-  });
+  }));
 
-  app.get('/api/audit-logs', requireAuth, requireRoles('Administrator', 'Operator'), (_req: AuthenticatedRequest, res: Response) => {
-    res.json(store.getAuditLogs());
-  });
+  app.get('/api/audit-logs', requireAuth, requireRoles('Administrator', 'Operator'), wrap(async (_req: AuthenticatedRequest, res: Response) => {
+    res.json(await store.getAuditLogs());
+  }));
 
-  app.get('/api/settings', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
-    res.json(store.getSettings());
-  });
+  app.get('/api/settings', requireAuth, wrap(async (_req: AuthenticatedRequest, res: Response) => {
+    res.json(await store.getSettings());
+  }));
 
-  app.get('/api/stats', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
-    const events = store.getAllEvents();
-    const rooms = store.getAllRooms();
-    const users = store.getAllUsers();
+  app.get('/api/stats', requireAuth, wrap(async (_req: AuthenticatedRequest, res: Response) => {
+    const [events, rooms, users] = await Promise.all([
+      store.getAllEvents(),
+      store.getAllRooms(),
+      store.getAllUsers()
+    ]);
 
     const totalEvents = events.length;
     const scheduledEvents = events.filter((e) => e.status === 'Scheduled').length;
     const pendingEvents = events.filter((e) => e.status === 'Menunggu Konfirmasi').length;
     const cancelledEvents = events.filter((e) => e.status === 'Dibatalkan').length;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getJakartaTodayDateStr();
     const todayEvents = events.filter((e) => e.tanggal === today);
     const upcomingEvents = events.filter((e) => e.tanggal >= today && e.status !== 'Dibatalkan');
 
@@ -2136,7 +2390,7 @@ export async function createApiApp(): Promise<Express> {
       totalRooms: rooms.length,
       totalUsers: users.length
     });
-  });
+  }));
 
   app.all('/api/*', (req: Request, res: Response) => {
     res.status(404).json({ error: `Endpoint API ${req.method} ${req.path} tidak ditemukan.` });

@@ -17,7 +17,7 @@ import {
   Users
 } from 'lucide-react';
 import { CampusEvent, Room, UserRole } from '../types';
-import { formatDateFullIndo, formatDateIndo } from '../utils/conflictDetector';
+import { formatDateFullIndo, formatDateIndo, getTodayWibDateStr } from '../utils/conflictDetector';
 
 interface DashboardViewProps {
   events: CampusEvent[];
@@ -43,7 +43,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const pendingCount = events.filter((e) => e.status === 'Menunggu Konfirmasi').length;
   const cancelledCount = events.filter((e) => e.status === 'Dibatalkan').length;
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayWibDateStr();
   const todayEvents = events.filter((e) => e.tanggal === todayStr);
   const upcomingEvents = events
     .filter((e) => e.tanggal >= todayStr && e.status !== 'Dibatalkan')

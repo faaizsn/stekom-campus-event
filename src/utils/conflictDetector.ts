@@ -112,12 +112,33 @@ export function formatDateFullIndo(dateStr: string): string {
 }
 
 /**
+ * Format local Date object to YYYY-MM-DD without UTC conversion shift
+ */
+export function formatLocalDateYMD(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Get current date YYYY-MM-DD in Asia/Jakarta (WIB)
+ */
+export function getTodayWibDateStr(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+  } catch {
+    return formatLocalDateYMD(new Date());
+  }
+}
+
+/**
  * Check room's live status today at specific time
  */
 export function getRoomLiveStatus(
   roomId: string,
   events: CampusEvent[],
-  checkDate: string = new Date().toISOString().split('T')[0],
+  checkDate: string = getTodayWibDateStr(),
   currentTimeStr: string = getCurrentTimeHHMM()
 ): { status: 'Tersedia' | 'Sedang Digunakan' | 'Akan Digunakan'; activeEvent?: CampusEvent; nextEvent?: CampusEvent } {
   // Find events for this room on checkDate that are NOT cancelled
@@ -141,8 +162,20 @@ export function getRoomLiveStatus(
 }
 
 function getCurrentTimeHHMM(): string {
-  const now = new Date();
-  const h = String(now.getHours()).padStart(2, '0');
-  const m = String(now.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).formatToParts(new Date());
+    const h = parts.find((p) => p.type === 'hour')?.value || '00';
+    const m = parts.find((p) => p.type === 'minute')?.value || '00';
+    return `${h === '24' ? '00' : h}:${m}`;
+  } catch {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  }
 }

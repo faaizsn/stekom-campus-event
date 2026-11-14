@@ -17,9 +17,15 @@ import { User } from '../types';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
+  serverStatus?: {
+    online: boolean;
+    persistence: string;
+    mode: string;
+    persistentServerStorage?: boolean;
+  };
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, serverStatus }) => {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -200,7 +206,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             <div className="px-3 py-2 rounded-xl border text-[11px] flex items-center space-x-2 bg-emerald-50/70 border-emerald-200/80 text-emerald-800">
               <Database className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
               <span className="font-medium leading-snug">
-                Terhubung ke Backend Database SQLite Server (Siap Digunakan)
+                {serverStatus?.mode === 'kv-rest'
+                  ? 'Terhubung ke Cloud KV Database (Redis REST) — Siap Digunakan'
+                  : serverStatus?.mode === 'serverless-ephemeral'
+                  ? 'Mode Vercel Serverless (Penyimpanan Browser Persisten) — Siap Digunakan'
+                  : 'Terhubung ke Backend Database SQLite Server — Siap Digunakan'}
               </span>
             </div>
           </div>

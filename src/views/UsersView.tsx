@@ -291,14 +291,14 @@ export const UsersView: React.FC<UsersViewProps> = ({
         <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" strokeWidth={1.75} />
         <div className="space-y-1 text-stone-600 leading-relaxed">
           <p className="font-bold text-stone-800">
-            Informasi Pembuatan Akun Login & Hak Akses Event (SQLite Backend)
+            Informasi Pembuatan Akun Login & Hak Akses Event
           </p>
           <p className="text-[11px]">
             Akun baru yang dibuat tanpa mengisi kata sandi awal otomatis mendapatkan kata sandi default{' '}
             <code className="px-1.5 py-0.5 rounded bg-[#F7F5F0] border border-stone-200 font-mono font-bold text-stone-800">
               stekom123
             </code>{' '}
-            dan langsung aktif tersimpan di database SQLite server tanpa memerlukan konfigurasi autentikasi eksternal. Pilih peran{' '}
+            dan langsung aktif tersimpan di database sistem tanpa memerlukan konfigurasi autentikasi eksternal. Pilih peran{' '}
             <strong>Operator</strong> atau <strong>Administrator</strong> jika akun akan digunakan untuk menambah jadwal event.
           </p>
         </div>
@@ -749,7 +749,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   </button>
                 </div>
                 <p className="text-[10px] text-stone-500 mt-1.5 leading-relaxed">
-                  Kata sandi langsung diperbarui di database SQLite dan dapat segera digunakan untuk login.
+                  Kata sandi langsung diperbarui di database sistem dan dapat segera digunakan untuk login.
                 </p>
               </div>
 

@@ -2,7 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { CampusEvent, Room } from '../types';
-import { formatDateIndo, formatDateFullIndo } from './conflictDetector';
+import { formatDateIndo, formatDateFullIndo, getTodayWibDateStr } from './conflictDetector';
 
 export interface ReportFilterMeta {
   title: string;
@@ -123,7 +123,7 @@ export function exportEventsToPdf(
   doc.setTextColor(70, 70, 70);
   doc.text(`Periode Laporan : ${meta.periodLabel}`, 14, 44);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayWibDateStr();
   const printDateIndo = formatDateFullIndo(todayStr);
   doc.text(`Tanggal Cetak  : Semarang, ${printDateIndo} (WIB)`, 210, 44);
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   CheckCircle2,
@@ -35,6 +35,13 @@ export const MonthlyRecapModal: React.FC<MonthlyRecapModalProps> = ({
 }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>(initialMonth);
   const [selectedYear, setSelectedYear] = useState<string>(initialYear);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedMonth(initialMonth);
+      setSelectedYear(initialYear);
+    }
+  }, [isOpen, initialMonth, initialYear]);
 
   const monthNames = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',

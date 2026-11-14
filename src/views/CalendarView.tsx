@@ -13,7 +13,12 @@ import {
 } from 'lucide-react';
 import { FilterBar } from '../components/FilterBar';
 import { CampusEvent, FilterOptions, Room, UserRole } from '../types';
-import { formatDateFullIndo, formatDateIndo } from '../utils/conflictDetector';
+import {
+  formatDateFullIndo,
+  formatDateIndo,
+  formatLocalDateYMD,
+  getTodayWibDateStr
+} from '../utils/conflictDetector';
 
 interface CalendarViewProps {
   events: CampusEvent[];
@@ -40,9 +45,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   onAddEventOnDate,
   onOpenMonthlyRecap
 }) => {
-  // Current viewing date (default: November 2026 or today)
+  // Current viewing date (WIB today)
   const [currentDate, setCurrentDate] = useState(() => {
-    return new Date('2026-11-10T00:00:00');
+    const [y, m, d] = getTodayWibDateStr().split('-').map(Number);
+    return new Date(y, m - 1, d);
   });
 
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
@@ -91,7 +97,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const handleToday = () => {
-    setCurrentDate(new Date('2026-11-10T00:00:00'));
+    const [y, m, d] = getTodayWibDateStr().split('-').map(Number);
+    setCurrentDate(new Date(y, m - 1, d));
   };
 
   // Month grid calculations
@@ -163,7 +170,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = formatLocalDateYMD(d);
       const dayName = new Intl.DateTimeFormat('id-ID', { weekday: 'short' }).format(d);
       return {
         dateStr,
@@ -316,8 +323,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           {/* Grid Cells */}
           <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-stone-100 min-h-[580px]">
             {calendarCells.map((cell, idx) => {
-              const isToday =
-                cell.dateStr === new Date('2026-11-10T00:00:00').toISOString().split('T')[0];
+              const isToday = cell.dateStr === getTodayWibDateStr();
 
               return (
                 <div
@@ -462,15 +468,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           <div className="flex items-center justify-between pb-4 border-b border-stone-100">
             <div>
               <h3 className="text-lg font-bold text-slate-900">
-                Agenda Kegiatan {formatDateFullIndo(currentDate.toISOString().split('T')[0])}
+                Agenda Kegiatan {formatDateFullIndo(formatLocalDateYMD(currentDate))}
               </h3>
               <p className="text-xs text-stone-500 font-medium">
-                Peminjaman dan jadwal aktif 21 ruangan kampus STEKOM pada hari ini
+                Peminjaman dan jadwal aktif {rooms.length} ruangan kampus STEKOM pada hari ini
               </p>
             </div>
             {canModify && (
               <button
-                onClick={() => onAddEventOnDate(currentDate.toISOString().split('T')[0])}
+                onClick={() => onAddEventOnDate(formatLocalDateYMD(currentDate))}
                 className="inline-flex items-center space-x-2 px-3.5 py-2 text-xs font-bold text-white bg-blue-700 rounded-xl hover:bg-blue-800 shadow-sm"
               >
                 <Plus className="w-4 h-4" />
@@ -482,7 +488,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           {/* Timeline of day events */}
           <div className="mt-6 space-y-3">
             {filteredEvents
-              .filter((e) => e.tanggal === currentDate.toISOString().split('T')[0])
+              .filter((e) => e.tanggal === formatLocalDateYMD(currentDate))
               .sort((a, b) => a.jam_mulai.localeCompare(b.jam_mulai))
               .map((ev) => {
                 const roomNames = (ev.ruangan_ids || [])
@@ -533,7 +539,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 );
               })}
 
-            {filteredEvents.filter((e) => e.tanggal === currentDate.toISOString().split('T')[0]).length === 0 && (
+            {filteredEvents.filter((e) => e.tanggal === formatLocalDateYMD(currentDate)).length === 0 && (
               <div className="py-12 text-center text-stone-400">
                 <CalendarIcon className="w-10 h-10 text-stone-300 mx-auto mb-2" />
                 <p className="text-xs font-bold text-stone-600">Tidak ada event terjadwal pada hari ini</p>

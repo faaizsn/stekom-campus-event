@@ -19,6 +19,7 @@ interface NavbarProps {
     online: boolean;
     persistence: string;
     mode: string;
+    persistentServerStorage?: boolean;
   };
   onOpenSettings: () => void;
   onOpenChangePassword?: () => void;
@@ -112,14 +113,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="font-medium text-[11px]">
-                  Database SQLite Aktif
+                  {serverStatus.mode === 'kv-rest'
+                    ? 'Cloud KV Database Aktif'
+                    : serverStatus.mode === 'serverless-ephemeral'
+                    ? 'Mode Browser Lokal (Vercel)'
+                    : 'Database SQLite Aktif'}
                 </span>
               </button>
             ) : (
               <div className="hidden lg:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#F7F5F0] border border-stone-200 text-xs text-stone-600">
                 <div className="w-2 h-2 rounded-full bg-emerald-500" />
                 <span className="font-medium text-[11px]">
-                  Database Server Aktif
+                  {serverStatus.mode === 'serverless-ephemeral'
+                    ? 'Mode Browser Lokal (Vercel)'
+                    : 'Database Server Aktif'}
                 </span>
               </div>
             )}
