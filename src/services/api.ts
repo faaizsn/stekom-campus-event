@@ -116,8 +116,11 @@ async function isServerlessLocalFallback(): Promise<boolean> {
   }
   try {
     const status = await apiRequest<ServerStatusInfo>('/api/status', { method: 'GET' }, false);
-    detectedPersistentServerStorage = status.persistentServerStorage !== false;
-    return !detectedPersistentServerStorage;
+    if (status && status.status === 'online' && typeof status.persistentServerStorage === 'boolean') {
+      detectedPersistentServerStorage = status.persistentServerStorage;
+      return !detectedPersistentServerStorage;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -217,12 +220,32 @@ async function loadOrInitLocalDb(): Promise<LocalDatabase> {
         Array.isArray(parsed.users) &&
         Array.isArray(parsed.audit_logs)
       ) {
-        return {
+        let needsRepair = false;
+        const healedUsers: LocalStoredUser[] = await Promise.all(
+          parsed.users.map(async (u) => {
+            const normEmail = normalizeLoginEmail(u.email);
+            if (normEmail !== u.email) needsRepair = true;
+            if (!u.passwordHash) {
+              needsRepair = true;
+              return {
+                ...u,
+                email: normEmail,
+                passwordHash: await hashLocalPassword(getDefaultPasswordForEmail(normEmail))
+              };
+            }
+            return normEmail !== u.email ? { ...u, email: normEmail } : u;
+          })
+        );
+        const loadedDb: LocalDatabase = {
           rooms: parsed.rooms,
           events: parsed.events,
-          users: parsed.users,
+          users: healedUsers,
           audit_logs: parsed.audit_logs
         };
+        if (needsRepair) {
+          saveLocalDb(loadedDb);
+        }
+        return loadedDb;
       }
     }
   } catch {
@@ -287,7 +310,9 @@ function appendLocalAudit(
 export const api = {
   async checkStatus(): Promise<ServerStatusInfo> {
     const info = await apiRequest<ServerStatusInfo>('/api/status', { method: 'GET' }, false);
-    detectedPersistentServerStorage = info.persistentServerStorage !== false;
+    if (info && info.status === 'online' && typeof info.persistentServerStorage === 'boolean') {
+      detectedPersistentServerStorage = info.persistentServerStorage;
+    }
     return info;
   },
 
@@ -334,7 +359,11 @@ export const api = {
       const user = db.users.find(
         (u) => u.email.toLowerCase() === normalizedEmail || u.email.toLowerCase() === rawLower
       );
-      if (!user || !(await verifyLocalPassword(password, user.passwordHash))) {
+      const passwordMatches =
+        user &&
+        ((await verifyLocalPassword(password, user.passwordHash)) ||
+          (password !== password.trim() && (await verifyLocalPassword(password.trim(), user.passwordHash))));
+      if (!user || !passwordMatches) {
         throw new Error('Email/username atau kata sandi salah. Silakan periksa kembali.');
       }
       const safe = sanitizeLocalUser(user);

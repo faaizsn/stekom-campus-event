@@ -422,7 +422,10 @@ function AppContent() {
     }
   };
 
-  const handleUpdateUser = async (userId: string, data: Partial<User>) => {
+  const handleUpdateUser = async (
+    userId: string,
+    data: Partial<User> & { new_password?: string }
+  ) => {
     if (!currentUser) return;
     try {
       const updatedUser = await api.updateUser(userId, data);
@@ -431,7 +434,12 @@ function AppContent() {
       if (currentUser.id === userId) {
         setCurrentUser(updatedUser);
       }
-      showToast('success', 'Data & peran pengguna berhasil diperbarui.');
+      showToast(
+        'success',
+        data.new_password
+          ? 'Data & kata sandi baru pengguna berhasil diperbarui.'
+          : 'Data & peran pengguna berhasil diperbarui.'
+      );
       await refreshAllData(currentUser, true);
     } catch (err: any) {
       showToast('error', err?.message || 'Gagal memperbarui data pengguna');
@@ -642,6 +650,7 @@ function AppContent() {
                 <UsersView
                   users={users}
                   currentUser={currentUser}
+                  serverStatus={serverStatus}
                   onAddUser={handleAddUser}
                   onUpdateUser={handleUpdateUser}
                   onResetPassword={handleResetUserPassword}

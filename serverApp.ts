@@ -1740,7 +1740,11 @@ export async function createApiApp(): Promise<Express> {
     }
 
     const user = await store.findUserByEmailOrUsername(identifier);
-    if (!user || !verifyPassword(password, user.password_hash)) {
+    const passwordMatches =
+      user &&
+      (verifyPassword(password, user.password_hash) ||
+        (password !== password.trim() && verifyPassword(password.trim(), user.password_hash)));
+    if (!user || !passwordMatches) {
       return res.status(401).json({ error: 'Email/username atau kata sandi salah. Silakan periksa kembali.' });
     }
 

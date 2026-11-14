@@ -25,8 +25,14 @@ import { formatDateIndo } from '../utils/conflictDetector';
 interface UsersViewProps {
   users: User[];
   currentUser: User;
+  serverStatus?: {
+    online: boolean;
+    persistence: string;
+    mode: string;
+    persistentServerStorage?: boolean;
+  };
   onAddUser: (user: Partial<User> & { password?: string; usedDefaultPassword?: boolean }) => Promise<void>;
-  onUpdateUser: (userId: string, data: Partial<User>) => Promise<void>;
+  onUpdateUser: (userId: string, data: Partial<User> & { new_password?: string }) => Promise<void>;
   onResetPassword: (userId: string, newPassword?: string) => Promise<{ password: string }>;
   onDeleteUser: (id: string) => Promise<void>;
 }
@@ -34,6 +40,7 @@ interface UsersViewProps {
 export const UsersView: React.FC<UsersViewProps> = ({
   users,
   currentUser,
+  serverStatus,
   onAddUser,
   onUpdateUser,
   onResetPassword,
@@ -57,6 +64,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
   const [editRole, setEditRole] = useState<UserRole>('Operator');
   const [editDepartment, setEditDepartment] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editLoading, setEditLoading] = useState(false);
 
@@ -155,6 +164,8 @@ export const UsersView: React.FC<UsersViewProps> = ({
     setEditRole(u.role);
     setEditDepartment(u.department || '');
     setEditPhone(u.phone || '');
+    setEditPassword('');
+    setShowEditPassword(false);
     setEditError(null);
   };
 
@@ -167,15 +178,41 @@ export const UsersView: React.FC<UsersViewProps> = ({
       return;
     }
 
+    const hasNewPassword = editPassword.trim().length > 0;
+    if (hasNewPassword && editPassword !== editPassword.trim()) {
+      setEditError('Kata sandi baru tidak boleh diawali atau diakhiri spasi.');
+      return;
+    }
+    if (hasNewPassword && editPassword.length < 6) {
+      setEditError('Kata sandi baru minimal 6 karakter.');
+      return;
+    }
+
+    const normalizedEditEmail = normalizeLoginEmail(editEmail);
+    const trimmedName = editName.trim();
+
     try {
       setEditLoading(true);
       await onUpdateUser(editTarget.id, {
-        name: editName.trim(),
-        email: normalizeLoginEmail(editEmail),
+        name: trimmedName,
+        email: normalizedEditEmail,
         role: editRole,
         department: editDepartment.trim(),
-        phone: editPhone.trim()
+        phone: editPhone.trim(),
+        ...(hasNewPassword ? { new_password: editPassword } : {})
       });
+      if (hasNewPassword) {
+        setLastAccountCreds({
+          title: 'Data & Kata Sandi Pengguna Berhasil Diperbarui',
+          name: trimmedName,
+          email: normalizedEditEmail,
+          password: editPassword,
+          role: editRole
+        });
+        setCopiedCreds(false);
+      }
+      setEditPassword('');
+      setShowEditPassword(false);
       setEditTarget(null);
     } catch (err: any) {
       setEditError(err.message || 'Gagal memperbarui data pengguna');
@@ -289,7 +326,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
       {/* Info Akun & Kebijakan Sandi */}
       <div className="p-4 rounded-[22px] bg-[#FCFBF8] border border-stone-200/90 shadow-xs flex items-start space-x-3 text-xs">
         <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" strokeWidth={1.75} />
-        <div className="space-y-1 text-stone-600 leading-relaxed">
+        <div className="space-y-1.5 text-stone-600 leading-relaxed">
           <p className="font-bold text-stone-800">
             Informasi Pembuatan Akun Login & Hak Akses Event
           </p>
@@ -301,6 +338,13 @@ export const UsersView: React.FC<UsersViewProps> = ({
             dan langsung aktif tersimpan di database sistem tanpa memerlukan konfigurasi autentikasi eksternal. Pilih peran{' '}
             <strong>Operator</strong> atau <strong>Administrator</strong> jika akun akan digunakan untuk menambah jadwal event.
           </p>
+          {serverStatus?.mode === 'serverless-ephemeral' && (
+            <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px]">
+              <strong>Mode Browser Lokal (Vercel tanpa Cloud KV):</strong> Perubahan akun & reset sandi tersimpan pada browser ini (<code className="font-mono">localStorage</code>). Untuk menguji login akun baru/reset, lakukan <strong>Keluar (Logout)</strong> lalu login kembali di browser yang sama. Tab Incognito/perangkat berbeda tidak dapat melihat akun lokal sebelum variabel{' '}
+              <code className="font-mono font-bold">UPSTASH_REDIS_REST_URL</code> &{' '}
+              <code className="font-mono font-bold">UPSTASH_REDIS_REST_TOKEN</code> dihubungkan di Vercel.
+            </div>
+          )}
         </div>
       </div>
 
@@ -323,6 +367,11 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 </code>{' '}
                 • Peran: <strong>{lastAccountCreds.role}</strong>
               </p>
+              {serverStatus?.mode === 'serverless-ephemeral' && (
+                <p className="text-[11px] text-amber-900 font-medium pt-0.5">
+                  Catatan: Pada mode Vercel Browser Lokal, uji login di browser yang sama (bukan jendela Incognito atau perangkat lain).
+                </p>
+              )}
             </div>
             <button
               type="button"
@@ -608,7 +657,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleEditSubmit} className="space-y-4 py-4 text-xs">
+            <form onSubmit={handleEditSubmit} autoComplete="off" className="space-y-4 py-4 text-xs">
               {editError && (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" strokeWidth={1.75} />
@@ -621,6 +670,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <input
                   type="text"
                   required
+                  autoComplete="off"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
@@ -632,6 +682,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <input
                   type="text"
                   required
+                  autoComplete="off"
                   value={editEmail}
                   onChange={(e) => setEditEmail(e.target.value)}
                   className="w-full px-3.5 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
@@ -677,6 +728,31 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 />
               </div>
 
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">
+                  Kata Sandi Baru <span className="text-stone-400 font-normal">(opsional, kosongkan jika tetap)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showEditPassword ? 'text' : 'password'}
+                    name="edit-user-new-password"
+                    autoComplete="new-password"
+                    placeholder="Minimal 6 karakter untuk ganti sandi"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    className="w-full pl-3.5 pr-10 py-2 bg-[#F7F5F0] border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEditPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-stone-400 hover:text-stone-700"
+                    title={showEditPassword ? 'Sembunyikan sandi' : 'Lihat sandi'}
+                  >
+                    {showEditPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
               <div className="pt-3 border-t border-stone-200/80 flex items-center justify-end space-x-2">
                 <button
                   type="button"
@@ -720,7 +796,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
               <p className="text-[11px] text-stone-500">{resetTarget.email}</p>
             </div>
 
-            <form onSubmit={handleConfirmResetPassword} className="space-y-4">
+            <form onSubmit={handleConfirmResetPassword} autoComplete="off" className="space-y-4">
               {resetError && (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
                   {resetError}
@@ -734,6 +810,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <div className="relative">
                   <input
                     type={showResetPassword ? 'text' : 'password'}
+                    name="reset-user-new-password"
                     autoComplete="new-password"
                     placeholder="Kosongkan untuk reset ke: stekom123"
                     value={resetNewPassword}
