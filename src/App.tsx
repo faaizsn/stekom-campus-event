@@ -124,8 +124,9 @@ function AppContent() {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [monthlyRecapOpen, setMonthlyRecapOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [recapMonth, setRecapMonth] = useState('11');
-  const [recapYear, setRecapYear] = useState('2026');
+  const [initialTodayParts] = useState(() => getTodayWibDateStr().split('-'));
+  const [recapMonth, setRecapMonth] = useState(initialTodayParts[1] || '11');
+  const [recapYear, setRecapYear] = useState(initialTodayParts[0] || '2026');
   const [selectedEvent, setSelectedEvent] = useState<CampusEvent | null>(null);
   const [editingEvent, setEditingEvent] = useState<CampusEvent | null>(null);
   const [initialDateForForm, setInitialDateForForm] = useState<string | undefined>(undefined);
@@ -176,6 +177,15 @@ function AppContent() {
         setUsers(usersList);
       } catch (err: any) {
         if (reqSeq !== refreshSeqRef.current) return;
+        if (!api.hasSessionToken()) {
+          setCurrentUser(null);
+          setRooms([]);
+          setEvents([]);
+          setUsers([]);
+          setAuditLogs([]);
+          showToast('warning', 'Sesi login Anda telah berakhir. Silakan masuk kembali.');
+          return;
+        }
         if (!silent) {
           showToast('error', err?.message || 'Gagal memuat data dari server database.');
         }

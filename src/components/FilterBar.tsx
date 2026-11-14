@@ -33,11 +33,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     { value: '12', label: 'Desember' }
   ];
 
+  const currentYearNum = new Date().getFullYear();
+  const yearOptions = Array.from(
+    { length: Math.max(4, currentYearNum - 2025 + 3) },
+    (_, idx) => String(2025 + idx)
+  );
   const years = [
     { value: 'all', label: 'Semua Tahun' },
-    { value: '2025', label: '2025' },
-    { value: '2026', label: '2026' },
-    { value: '2027', label: '2027' }
+    ...yearOptions.map((y) => ({ value: y, label: y }))
   ];
 
   const statuses = [

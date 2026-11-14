@@ -308,6 +308,10 @@ function appendLocalAudit(
 }
 
 export const api = {
+  hasSessionToken(): boolean {
+    return Boolean(getStoredToken());
+  },
+
   async checkStatus(): Promise<ServerStatusInfo> {
     const info = await apiRequest<ServerStatusInfo>('/api/status', { method: 'GET' }, false);
     if (info && info.status === 'online' && typeof info.persistentServerStorage === 'boolean') {

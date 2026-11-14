@@ -854,7 +854,13 @@ async function createKvRestAdapter(restUrl: string, restToken: string): Promise<
           return {
             rooms: parsed.rooms.map((r) => mapRoomRecord(r as unknown as Record<string, unknown>)),
             events: (parsed.events || []).map((e) => mapEventRecord(e as unknown as Record<string, unknown>)),
-            users: parsed.users.map((u) => mapUserRecord(u as unknown as Record<string, unknown>)),
+            users: parsed.users.map((u) => {
+              const mapped = mapUserRecord(u as unknown as Record<string, unknown>);
+              if (!mapped.password_hash || !mapped.password_hash.includes(':')) {
+                mapped.password_hash = hashPassword(getDefaultPasswordForEmail(mapped.email));
+              }
+              return mapped;
+            }),
             audit_logs: (parsed.audit_logs || []).map((l) => mapAuditRecord(l as unknown as Record<string, unknown>)),
             system_settings: {
               app_name: parsed.system_settings?.app_name || 'STEKOM CAMPUS EVENT MANAGEMENT',
@@ -1645,12 +1651,22 @@ interface AuthenticatedRequest extends Request {
 export async function createApiApp(): Promise<Express> {
   const store = await createStorageAdapter();
   const app = express();
-  app.use(express.json());
-  app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+  app.use(express.json({ limit: '2mb' }));
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Pragma');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
     next();
+  });
+
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', service: 'stekom-campus-event', timestamp: new Date().toISOString() });
   });
 
   const wrap = (

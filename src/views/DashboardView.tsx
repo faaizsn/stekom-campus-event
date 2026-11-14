@@ -66,20 +66,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     .sort((a, b) => b.usage - a.usage)
     .slice(0, 6);
 
-  // Monthly distribution aggregation from real events
+  // Monthly distribution aggregation from real events for the active WIB year
+  const currentWibYear = todayStr.split('-')[0];
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
   const monthlyStats = Array.from({ length: 12 }, (_, i) => {
     const monthIndex = i + 1;
     const mStr = String(monthIndex).padStart(2, '0');
-    const scheduled = events.filter(
-      (e) => e.status === 'Scheduled' && e.tanggal.split('-')[1] === mStr
-    ).length;
-    const pending = events.filter(
-      (e) => e.status === 'Menunggu Konfirmasi' && e.tanggal.split('-')[1] === mStr
-    ).length;
-    const cancelled = events.filter(
-      (e) => e.status === 'Dibatalkan' && e.tanggal.split('-')[1] === mStr
-    ).length;
+    const yearMonthEvents = events.filter((e) => {
+      const [evYear, evMonth] = (e.tanggal || '').split('-');
+      return evYear === currentWibYear && evMonth === mStr;
+    });
+    const scheduled = yearMonthEvents.filter((e) => e.status === 'Scheduled').length;
+    const pending = yearMonthEvents.filter((e) => e.status === 'Menunggu Konfirmasi').length;
+    const cancelled = yearMonthEvents.filter((e) => e.status === 'Dibatalkan').length;
     return {
       month: monthNames[i],
       scheduled,
@@ -254,7 +253,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Grafik Sebaran Event Bulanan (2026)
+                  Grafik Sebaran Event Bulanan ({currentWibYear})
                 </h3>
                 <p className="text-xs text-stone-500 mt-0.5">
                   Visualisasi sebaran kegiatan kampus Universitas STEKOM
@@ -288,7 +287,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div key={idx} className="flex-1 flex flex-col items-center group relative h-full justify-end">
                       {/* Tooltip */}
                       <div className="absolute -top-12 bg-slate-800 text-stone-50 text-[11px] py-1.5 px-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition pointer-events-none whitespace-nowrap z-20 shadow-lg font-medium tabular-nums">
-                        <strong>{item.month} 2026</strong>: {item.total} Event
+                        <strong>{item.month} {currentWibYear}</strong>: {item.total} Event
                         <br />
                         {item.scheduled} Scheduled · {item.pending} Menunggu
                       </div>

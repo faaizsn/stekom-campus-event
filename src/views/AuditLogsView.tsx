@@ -76,14 +76,14 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ logs }) => {
           </select>
         </div>
 
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             placeholder="Cari event, petugas, detail..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 pr-3.5 py-1.5 text-xs bg-stone-50/80 border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 w-64 font-medium text-stone-800"
+            className="pl-9 pr-3.5 py-1.5 text-xs bg-stone-50/80 border border-stone-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 w-full sm:w-64 font-medium text-stone-800"
           />
         </div>
       </div>

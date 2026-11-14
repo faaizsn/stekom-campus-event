@@ -140,9 +140,23 @@ export const MonthlyRecapModal: React.FC<MonthlyRecapModalProps> = ({
                 onChange={(e) => setSelectedYear(e.target.value)}
                 className="px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="2025">2025</option>
-                <option value="2026">2026</option>
-                <option value="2027">2027</option>
+                {Array.from(
+                  new Set([
+                    '2025',
+                    '2026',
+                    '2027',
+                    String(new Date().getFullYear()),
+                    String(new Date().getFullYear() + 1),
+                    selectedYear,
+                    ...events.map((e) => (e.tanggal || '').split('-')[0]).filter((y) => /^\d{4}$/.test(y))
+                  ])
+                )
+                  .sort()
+                  .map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}
+                    </option>
+                  ))}
               </select>
             </div>
           </div>
